@@ -1,0 +1,6 @@
+{
+  "blockedRoles": ["Member"],
+  "allowedRoles": [],
+  "muteMinutes": 2,
+  "logChannelNames": ["discord-logs", "mod-logs", "logs"]
+}

@@ -1,0 +1,298 @@
+{
+  "lastCase": 10036,
+  "cases": [
+    {
+      "caseId": 10001,
+      "type": "Warn",
+      "user": "1129815941144924190",
+      "moderator": "1191442500976640172",
+      "reason": "test",
+      "time": 1766274011774
+    },
+    {
+      "caseId": 10002,
+      "type": "Warn",
+      "user": "1129815941144924190",
+      "moderator": "1191442500976640172",
+      "reason": "test",
+      "time": 1766274250820
+    },
+    {
+      "caseId": 10003,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "test",
+      "time": 1766274269031
+    },
+    {
+      "caseId": 10004,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766274555104
+    },
+    {
+      "caseId": 10005,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766274634643
+    },
+    {
+      "caseId": 10006,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766274888920
+    },
+    {
+      "caseId": 10007,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766274894356
+    },
+    {
+      "caseId": 10008,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766275452087
+    },
+    {
+      "caseId": 10009,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766276054876
+    },
+    {
+      "caseId": 10010,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766276376773
+    },
+    {
+      "caseId": 10011,
+      "type": "Warn",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766276514797
+    },
+    {
+      "caseId": 10012,
+      "type": "Ban",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "griefing in Scrims",
+      "time": 1766276552095
+    },
+    {
+      "caseId": 10013,
+      "type": "Unban",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Unban",
+      "time": 1766276643139
+    },
+    {
+      "caseId": 10014,
+      "type": "Mute",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Timeout 3m",
+      "time": 1766277245418
+    },
+    {
+      "caseId": 10015,
+      "type": "Warn",
+      "user": "1132633595132006422",
+      "moderator": "1191442500976640172",
+      "reason": "Test",
+      "time": 1766277779990
+    },
+    {
+      "caseId": 10016,
+      "type": "Warn",
+      "user": "1129815941144924190",
+      "moderator": "1191442500976640172",
+      "reason": "Racist",
+      "time": 1766278751720
+    },
+    {
+      "caseId": 10017,
+      "type": "Warn",
+      "user": "1129815941144924190",
+      "moderator": "1191442500976640172",
+      "reason": "Hör auf zu goonen",
+      "time": 1766281817912
+    },
+    {
+      "caseId": 10018,
+      "type": "AutoMute",
+      "user": "1419323844971335763",
+      "moderator": "AutoMod",
+      "reason": "Posting link",
+      "durationMs": 120000,
+      "time": 1766334664662
+    },
+    {
+      "caseId": 10019,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Test",
+      "time": 1766338094438
+    },
+    {
+      "caseId": 10020,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Test",
+      "time": 1766338372118
+    },
+    {
+      "caseId": 10021,
+      "type": "Ban",
+      "user": "1112672057713492039",
+      "moderator": "1191442500976640172",
+      "reason": "Zu lange unbannt",
+      "time": 1766338695720
+    },
+    {
+      "caseId": 10022,
+      "type": "Unban",
+      "user": "1112672057713492039",
+      "moderator": "1191442500976640172",
+      "reason": "Unban",
+      "time": 1766338724946
+    },
+    {
+      "caseId": 10023,
+      "type": "Warn",
+      "user": "1132633595132006422",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766339065370
+    },
+    {
+      "caseId": 10024,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766339094122
+    },
+    {
+      "caseId": 10025,
+      "type": "Unban",
+      "user": "1419323844971335763",
+      "moderator": "1191442500976640172",
+      "reason": "Unban",
+      "time": 1766339153394
+    },
+    {
+      "caseId": 10026,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766339225327
+    },
+    {
+      "caseId": 10027,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766339429076
+    },
+    {
+      "caseId": 10028,
+      "type": "AutoMute",
+      "user": "1419323844971335763",
+      "moderator": "AutoMod",
+      "reason": "Posting link",
+      "durationMs": 120000,
+      "time": 1766339590743
+    },
+    {
+      "caseId": 10029,
+      "type": "AutoMute",
+      "user": "1419323844971335763",
+      "moderator": "AutoMod",
+      "reason": "Posting link",
+      "durationMs": 120000,
+      "time": 1766339841082
+    },
+    {
+      "caseId": 10030,
+      "type": "AutoMute",
+      "user": "1419323844971335763",
+      "moderator": "AutoMod",
+      "reason": "Posting link",
+      "durationMs": 120000,
+      "time": 1766339931183
+    },
+    {
+      "caseId": 10031,
+      "type": "AutoMute",
+      "user": "1419323844971335763",
+      "moderator": "AutoMod",
+      "reason": "Posting link",
+      "durationMs": 120000,
+      "time": 1766340054056
+    },
+    {
+      "caseId": 10032,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766340226951
+    },
+    {
+      "caseId": 10033,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766340530064
+    },
+    {
+      "caseId": 10034,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766341801400
+    },
+    {
+      "caseId": 10035,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766342041695
+    },
+    {
+      "caseId": 10036,
+      "type": "Warn",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "Using caps",
+      "time": 1766342070768
+    }
+  ]
+}

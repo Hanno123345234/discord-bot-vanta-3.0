@@ -1,0 +1,7 @@
+{
+  "ticketCategoryId": "REPLACE_WITH_CATEGORY_ID",
+  "logChannelId": "REPLACE_WITH_LOG_CHANNEL_ID",
+  "staffRoleId": "REPLACE_WITH_STAFF_ROLE_ID",
+  "transcriptFolder": "transcripts",
+  "maxOpenPerUser": 1
+}
