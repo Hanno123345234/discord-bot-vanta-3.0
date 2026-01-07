@@ -17,6 +17,18 @@ module.exports = {
   async execute(interaction) {
     const config = loadConfig();
 
+    // resolve staff role id from config: accept raw id, mention, or role name
+    function resolveRoleId(guild, raw) {
+      if (!raw || !guild) return null;
+      const s = String(raw).trim();
+      const cleaned = s.replace(/[<@&>]/g, '');
+      if (/^\d+$/.test(cleaned)) return cleaned;
+      const byName = guild.roles.cache.find(r => r.name === s);
+      return byName ? byName.id : null;
+    }
+
+    const staffId = (interaction && interaction.guild) ? resolveRoleId(interaction.guild, config.staffRoleId) : null;
+
     // Slash command handler for /ticket
     if (interaction.isChatInputCommand()) {
       if (interaction.commandName === 'ticket') {
@@ -44,10 +56,8 @@ module.exports = {
         const channelName = `ticket-${userId}`;
 
         const everyone = guild.roles.everyone;
-        const overwrites = [
-          { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] }
-        ];
-        if (config.staffRoleId) overwrites.push({ id: config.staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+        const overwrites = [ { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] } ];
+        if (staffId) overwrites.push({ id: staffId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
         overwrites.push({ id: userId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
 
         const channel = await guild.channels.create({ name: channelName, type: 0, parent: categoryId || undefined, permissionOverwrites: overwrites, topic: `ticket:${userId}:${type}` });
@@ -67,10 +77,7 @@ module.exports = {
         await interaction.editReply({ content: `Dein Ticket wurde erstellt: ${channel}`, ephemeral: true });
         // log creation
         try {
-          if (config.logChannelId) {
-            const logCh = guild.channels.cache.get(config.logChannelId);
-            if (logCh) await logCh.send({ embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${channel} erstellt von <@${userId}> Typ: ${type}`)] });
-          }
+          await sendLog(guild, { embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${channel} erstellt von <@${userId}> Typ: ${type}`)] });
         } catch (e) { console.error('ticket log send failed', e); }
 
       } catch (e) {
@@ -92,7 +99,7 @@ module.exports = {
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
         const isOwner = interaction.user.id === ownerId;
-        const isStaff = member ? member.roles.cache.has(config.staffRoleId) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
+        const isStaff = member ? (staffId && member.roles.cache.has(staffId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
         if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
 
         // show modal to collect reason
@@ -100,6 +107,11 @@ module.exports = {
         const input = new TextInputBuilder().setCustomId('close_reason').setLabel('Grund (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('Kurze Notiz warum geschlossen wird');
         const row = new ActionRowBuilder().addComponents(input);
         modal.addComponents(row);
+        // log that a close modal is about to be shown (close requested)
+        try {
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0xFFAA00).setTitle('Ticket-Schließung angefragt').setDescription(`Schließung angefragt für ${channel.name} von <@${interaction.user.id}>`)] });
+        } catch (e) { console.error('ticket close modal log failed', e); }
+
         await interaction.showModal(modal);
         return;
       } catch (e) {
@@ -124,7 +136,7 @@ module.exports = {
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
         const isOwner = interaction.user.id === ownerId;
-        const isStaff = member ? member.roles.cache.has(config.staffRoleId) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
+        const isStaff = member ? (staffId && member.roles.cache.has(staffId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
         if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
 
         // create transcript
@@ -135,10 +147,7 @@ module.exports = {
 
         // send transcript to log channel if configured
         try {
-          if (config.logChannelId) {
-            const logCh = interaction.guild.channels.cache.get(config.logChannelId);
-            if (logCh) await logCh.send({ embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)], files: [txtPath, htmlPath] });
-          }
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)], files: [txtPath, htmlPath].filter(Boolean) });
         } catch (e) { console.error('failed to send transcript to log channel', e); }
 
         // DM owner with transcript
@@ -149,15 +158,24 @@ module.exports = {
           }
         } catch (e) {}
 
-        // lock channel: deny SEND_MESSAGES for ticket owner and rename
+        // remove ticket: delete all channels in the parent category (if exists) and then delete the category
         try {
-          await channel.edit({ name: `closed-${channel.name}` });
-          await channel.permissionOverwrites.edit(ownerId, { SendMessages: false, ViewChannel: true });
-          if (config.staffRoleId) await channel.permissionOverwrites.edit(config.staffRoleId, { SendMessages: false, ViewChannel: true });
-          await channel.send({ embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Dieses Ticket wurde geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] });
-        } catch (e) { console.error('failed to lock channel', e); }
+          const parent = channel.parent;
+          // send final notice to the channel before deletion if possible
+          try { await channel.send({ embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Dieses Ticket wurde geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] }).catch(()=>{}); } catch(e) {}
 
-        await interaction.editReply({ content: 'Ticket geschlossen und Transkript erstellt.' });
+          if (parent) {
+            // delete each child channel (skip already deleting channel if needed)
+            for (const ch of parent.children.values()) {
+              try { await ch.delete().catch(()=>{}); } catch (e) {}
+            }
+            try { await parent.delete().catch(()=>{}); } catch (e) { console.error('failed to delete parent category', e); }
+          } else {
+            try { await channel.delete().catch(()=>{}); } catch (e) { console.error('failed to delete ticket channel', e); }
+          }
+        } catch (e) { console.error('failed to remove ticket', e); }
+
+        try { await interaction.editReply({ content: 'Ticket geschlossen, Transkript erstellt und Kanal/Kategorie gelöscht.' }); } catch(e) {}
         return;
       } catch (e) {
         console.error('modal submit close failed', e);
@@ -165,4 +183,4 @@ module.exports = {
       }
     }
   }
-};
+}; 

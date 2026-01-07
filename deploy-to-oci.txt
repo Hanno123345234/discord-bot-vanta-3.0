@@ -1,0 +1,91 @@
+Oracle Cloud Always Free — Schritt‑für‑Schritt Deployment für VantaBot
+
+Vorbereitung
+- Erstelle ein Oracle Cloud Konto: https://cloud.oracle.com
+- Erzeuge lokal einen SSH‑Key (falls noch nicht vorhanden):
+  PowerShell (oder Git Bash):
+    ssh-keygen -t ed25519 -C "vantabot" -f "$env:USERPROFILE\\.ssh\\id_ed25519" -N ""
+    type $env:USERPROFILE\\.ssh\\id_ed25519.pub   # kopiere den Inhalt
+
+OCI: VM erstellen (Klick‑für‑Klick)
+1) Login → Menü (≡) → Compute → Instances → Create Instance
+2) Name: VantaBot-VM
+3) Image: Ubuntu 22.04 (oder Oracle Linux)
+4) Shape: Change → wähle an Always Free Shape (z.B. VM.Standard.E2.1.Micro) → Select
+5) Networking: Ensure "Assign a public IPv4 address" is enabled
+6) Add SSH keys: Paste deinen Public SSH key (id_ed25519.pub) → Add
+7) Create
+8) Notiere die Public IP der neuen Instanz
+
+SSH in die VM
+- Beispiel (Windows PowerShell / Git Bash):
+  ssh -i $env:USERPROFILE\\.ssh\\id_ed25519 ubuntu@PUBLIC_IP
+  (User kann `ubuntu` oder `opc` je nach Image sein)
+
+Auf der VM: Node, Git, PM2 & Deploy (kopiere + füge ein)
+# nach SSH einloggen
+sudo apt update && sudo apt upgrade -y
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+sudo apt install -y nodejs git build-essential
+
+# Projektordner
+sudo mkdir -p /opt/vantabot
+sudo chown $USER:$USER /opt/vantabot
+cd /opt/vantabot
+
+# Klone dein Repo (ersetze URL)
+git clone https://github.com/YOUR_USER/YOUR_REPO.git /opt/vantabot
+cd /opt/vantabot
+
+# Installiere Abhängigkeiten
+npm install
+
+# PM2 installieren und Service einrichten
+sudo npm install -g pm2
+pm2 start index.js --name VantaBot
+pm2 save
+# Folge dem pm2 startup output (Beispielausgabe):
+# sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u <youruser> --hp /home/<youruser>
+# Führe den empfohlenen sudo-Befehl aus, den pm2 ausgibt, z. B.:
+# sudo env PATH=$PATH:/usr/bin pm2 startup systemd -u ubuntu --hp /home/ubuntu
+
+Token sicher setzen (nicht ins Repo)
+# Temporär in der Shell (nur für Test):
+export DISCORD_TOKEN='YOUR_NEW_TOKEN'
+pm2 restart VantaBot --update-env
+
+# Besser: Export in ~/.profile oder setze pm2 envs
+# Beispiel persistent via systemd + environment file is more involved; einfacher:
+# Erstelle eine kleine start‑script.sh, die env lädt und startet:
+cat > ~/start_vantabot.sh <<'EOS'
+#!/bin/bash
+export DISCORD_TOKEN='YOUR_NEW_TOKEN'
+cd /opt/vantabot
+/usr/bin/node index.js
+EOS
+chmod +x ~/start_vantabot.sh
+# Dann nutze pm2 to start the script instead of index.js if desired:
+pm2 start ~/start_vantabot.sh --name VantaBot
+
+Logs prüfen
+pm2 logs VantaBot
+pm2 status
+# Suche in Logs nach "Logged in as" oder "Ready —"
+
+Autostart Test (Reboot)
+sudo reboot
+# nach Reboot wieder verbinden per SSH
+pm2 status
+pm2 logs VantaBot -n 100
+
+Sicherheit & Hinweise
+- Rotiere den Token im Discord Developer Portal, falls er öffentlich war.
+- Schütze SSH mit Key Authentication und deaktiviere Passwortlogin.
+- Oracle Always Free bleibt kostenlos, solange du Always‑Free Shapes verwendest.
+
+Wenn du möchtest, erstelle ich jetzt:
+- `ecosystem.config.js` (fertig) und
+- eine kurze `oci-deploy-commands.sh` (Shell Script), die du auf der VM ausführen kannst um alles automatisch einzurichten (ohne Token), oder
+- eine Schritt‑für‑Schritt Live‑Begleitung (du machst Klicks, ich leite). 
+
+Ersetze in obigen Befehlen: `PUBLIC_IP`, `YOUR_USER/YOUR_REPO` und `YOUR_NEW_TOKEN`.

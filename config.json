@@ -1,6 +1,7 @@
 {
   "ticketCategoryId": "REPLACE_WITH_CATEGORY_ID",
-  "logChannelId": "REPLACE_WITH_LOG_CHANNEL_ID",
+  "logChannelId": "1458179383079600169",
+  "modLogChannelId": "1458179383079600169",
   "staffRoleId": "REPLACE_WITH_STAFF_ROLE_ID",
   "transcriptFolder": "transcripts",
   "maxOpenPerUser": 1

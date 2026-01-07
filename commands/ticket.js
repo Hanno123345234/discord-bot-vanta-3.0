@@ -1,4 +1,5 @@
 const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { sendLog } = require('../utils/logger');
 
 module.exports = {
   name: 'ticket',
@@ -25,5 +26,17 @@ module.exports = {
     const row = new ActionRowBuilder().addComponents(menu);
 
     await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
+
+    // log to configured log channel if present
+    try {
+      if (interaction.guild) {
+        await sendLog(interaction.guild, { embeds: [
+          new EmbedBuilder()
+            .setColor(0x00AAFF)
+            .setTitle('Ticket-Menü gesendet')
+            .setDescription(`Ticket-Menü gesendet von <@${interaction.user.id}> in ${interaction.channel ? (interaction.channel.name || interaction.channel.id) : 'DM'}`)
+        ] });
+      }
+    } catch (e) { console.error('ticket menu log failed', e); }
   }
 };

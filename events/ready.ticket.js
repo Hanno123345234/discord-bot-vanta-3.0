@@ -40,6 +40,41 @@ module.exports = {
         }
       }
 
+      // Optional: send ticket announcement to a configured channel ID
+      const announceChannelId = process.env.TICKET_ANNOUNCE_CHANNEL || config.announceChannelId || config.ticketAnnounceChannelId || null;
+      if (announceChannelId) {
+        try {
+          const ch = await client.channels.fetch(announceChannelId).catch(() => null);
+          const isText = ch && (typeof ch.isTextBased === 'function' ? ch.isTextBased() : (ch.isText && ch.isText()));
+          if (isText) {
+            const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
+            const embed = new EmbedBuilder()
+              .setTitle('Support Tickets')
+              .setDescription('Wähle den Ticket-Typ aus, um ein Ticket zu öffnen.')
+              .setColor(0x8A2BE2);
+
+            const menu = new StringSelectMenuBuilder()
+              .setCustomId('ticket_create')
+              .setPlaceholder('Wähle einen Ticket-Typ')
+              .addOptions([
+                { label: 'Support', value: 'support', description: 'Allgemeine Hilfe', emoji: '🛠️' },
+                { label: 'Bug', value: 'bug', description: 'Fehler melden', emoji: '🐛' },
+                { label: 'Bewerbung', value: 'apply', description: 'Bewerbung einreichen', emoji: '💼' }
+              ]);
+
+            const row = new ActionRowBuilder().addComponents(menu);
+            const pingRoleId = process.env.TICKET_PING_ROLE || config.pingRoleId || '1344391422954176634';
+            const content = `Bitte erstelle ein Ticket, indem du unten den Typ auswählst. <@&${pingRoleId}>`;
+            await ch.send({ content, embeds: [embed], components: [row], allowedMentions: { roles: [String(pingRoleId)] } }).catch((err) => console.error('Failed to send ticket announcement (send):', err));
+            console.log(`Ticket announcement sent to channel ${announceChannelId}.`);
+          } else {
+            console.warn('Announce channel not found, not text-based, or no permission:', announceChannelId);
+          }
+        } catch (e) {
+          console.error('Failed to send ticket announcement (exception):', e);
+        }
+      }
+
       console.log(`Ready — ${client.user.tag}`);
     } catch (e) {
       console.error('ready.ticket error', e);

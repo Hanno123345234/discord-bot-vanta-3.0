@@ -4,6 +4,7 @@ const path = require('path');
 try { require('dotenv').config(); } catch (e) {}
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
+const { createTranscript } = require('./utils/transcript');
 let ffmpegPath = null;
 try { ffmpegPath = require('ffmpeg-static'); } catch (e) { ffmpegPath = 'ffmpeg'; }
 const { spawn } = require('child_process');
@@ -187,6 +188,60 @@ function startMusicForGuild(guildId, connection) {
 }
 
 client.on('interactionCreate', async (interaction) => {
+  // Handle ticket close button interactions
+  try {
+    if (interaction.isButton() && interaction.customId === 'ticket_close') {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const channel = interaction.channel;
+        if (!channel || !channel.topic || !channel.topic.startsWith('ticket:')) return interaction.editReply('Dieses Knopf kann nur in Ticket-Kanälen verwendet werden.');
+        const parts = channel.topic.split(':');
+        const ownerId = parts[1];
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+        const cfgPath = path.join(DATA_DIR, 'config.json');
+        const cfg = loadJson(cfgPath, {});
+        const isOwner = interaction.user.id === ownerId;
+        const isStaff = member ? (cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
+        if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
+
+        const reason = `Geschlossen durch ${interaction.user.tag} via Button`;
+
+        // create transcript
+        const folder = path.join(DATA_DIR, cfg.transcriptFolder || 'transcripts');
+        if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+        const { txtPath, htmlPath } = await createTranscript(channel, folder).catch(()=>({ txtPath: null, htmlPath: null }));
+
+        // try send transcript to log channel
+        try {
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)], files: [txtPath].filter(Boolean) });
+        } catch (e) { console.error('ticket log send failed', e); }
+
+        // DM owner
+        try { const owner = await interaction.client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
+
+        // announce and remove category + channels
+        try {
+          const parent = channel.parent;
+          if (parent) {
+            await parent.children.each(async (ch) => { try { await ch.delete().catch(()=>{}); } catch(e){} });
+            await parent.delete().catch(()=>{});
+          } else {
+            await channel.delete().catch(()=>{});
+          }
+        } catch (e) { console.error('failed to remove ticket channels/category', e); }
+
+        try {
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] });
+        } catch (e) { console.error('ticket log send failed', e); }
+
+        return interaction.editReply('Ticket geschlossen und entfernt.');
+      } catch (e) {
+        console.error('ticket_close interaction failed', e);
+        return interaction.editReply('Fehler beim Schließen des Tickets.');
+      }
+    }
+  } catch (e) { console.error('ticket_close button handler error', e); }
+
   // Handle select menu and pagination buttons
   const folder = path.join(DATA_DIR, 'music', 'christmas');
   const files = fs.existsSync(folder) ? fs.readdirSync(folder).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f)) : [];
@@ -295,6 +350,107 @@ client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
+// Moderation / audit style event logs: member joins/leaves, voice join/leave, message deletions
+function findLogChannel(guild) {
+  try {
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    if (cfg.logChannelId) return guild.channels.cache.get(cfg.logChannelId) || null;
+    // fallback to common names
+    const names = ['discord-logs','mod-logs','logs','audit-logs'];
+    return guild.channels.cache.find(c => names.includes(c.name)) || null;
+  } catch (e) { return null; }
+}
+
+const { sendLog } = require('./utils/logger');
+
+function isTextLike(ch) { return ch && (typeof ch.isTextBased === 'function' ? ch.isTextBased() : (ch.isText && ch.isText())); }
+
+client.on('guildMemberAdd', async (member) => {
+  try {
+    const logCh = findLogChannel(member.guild);
+    if (!logCh || !isTextLike(logCh)) return;
+    const embed = new EmbedBuilder()
+      .setTitle('User joined')
+      .setColor(0x2ECC71)
+      .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+      .addFields(
+        { name: 'User', value: `<@${member.id}> (${member.user.tag})`, inline: true },
+        { name: 'ID', value: `${member.id}`, inline: true },
+        { name: 'Joined', value: `${new Date().toLocaleString()}`, inline: false }
+      ).setTimestamp();
+              await sendLog(member.guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+  } catch (e) { console.error('guildMemberAdd log failed', e); }
+});
+
+client.on('guildMemberRemove', async (member) => {
+  try {
+    const logCh = findLogChannel(member.guild);
+    if (!logCh || !isTextLike(logCh)) return;
+    const roles = member.roles ? member.roles.cache.filter(r => r.name !== '@everyone').map(r => r.name).join(', ') : '';
+    const embed = new EmbedBuilder()
+      .setTitle('User left')
+      .setColor(0xE74C3C)
+      .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+      .addFields(
+        { name: 'User', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
+        { name: 'ID', value: `${member.id}`, inline: true },
+        { name: 'Roles', value: roles || '—', inline: false }
+      ).setTimestamp();
+              await sendLog(member.guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+  } catch (e) { console.error('guildMemberRemove log failed', e); }
+});
+
+client.on('voiceStateUpdate', async (oldState, newState) => {
+  try {
+    const guild = newState.guild || oldState.guild;
+    const logCh = findLogChannel(guild);
+    if (!logCh || !isTextLike(logCh)) return;
+    // join
+    if (!oldState.channelId && newState.channelId) {
+      const embed = new EmbedBuilder().setTitle('User joined channel').setColor(0x2ECC71)
+        .setThumbnail(newState.member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+        .addFields(
+          { name: 'User', value: `${newState.member.user.tag} (<@${newState.id}>)`, inline: true },
+          { name: 'Channel', value: `${newState.channel ? `${newState.channel.name}` : newState.channelId}`, inline: true }
+        ).setTimestamp();
+              await sendLog(guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+    }
+    // leave
+    if (oldState.channelId && !newState.channelId) {
+      const embed = new EmbedBuilder().setTitle('User left channel').setColor(0xE74C3C)
+        .setThumbnail(oldState.member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+        .addFields(
+          { name: 'User', value: `${oldState.member.user.tag} (<@${oldState.id}>)`, inline: true },
+          { name: 'Channel', value: `${oldState.channel ? `${oldState.channel.name}` : oldState.channelId}`, inline: true }
+        ).setTimestamp();
+      await sendLog(guild, { embeds: [embed] });
+    }
+  } catch (e) { console.error('voiceStateUpdate log failed', e); }
+});
+
+client.on('messageDelete', async (message) => {
+  try {
+    const guild = message.guild;
+    if (!guild) return;
+    const logCh = findLogChannel(guild);
+    if (!logCh || !isTextLike(logCh)) return;
+    // message may be partial
+    let author = message.author;
+    let content = message.content || '';
+    try { if (message.partial) { const fetched = await message.fetch().catch(()=>null); if (fetched) { author = fetched.author; content = fetched.content; } } } catch(e){}
+    const embed = new EmbedBuilder()
+      .setTitle('Message deleted')
+      .setColor(0xE74C3C)
+      .addFields(
+        { name: 'Channel', value: `${message.channel ? `${message.channel.name}` : 'Unknown'}`, inline: true },
+        { name: 'Message ID', value: `${message.id}`, inline: true },
+        { name: 'Message author', value: author ? `${author.tag} (${author.id})` : 'Unknown', inline: false },
+        { name: 'Message', value: content ? content.substring(0, 1900) : 'Content not available', inline: false }
+      ).setTimestamp();
+              await sendLog(guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+  } catch (e) { console.error('messageDelete log failed', e); }
+});
+
 // Ticket system: load modular ready + interaction handlers (keeps main file unchanged)
 try {
   const readyTicket = require('./events/ready.ticket.js');
@@ -309,6 +465,75 @@ try {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // Prefix command ticket system: !ticket (creates ticket category+channel), !close (mods only)
+  try {
+    if (message.content && message.content.trim().toLowerCase() === `${PREFIX}ticket`) {
+      if (!message.guild) return message.reply('Dieses Kommando kann nur auf einem Server verwendet werden.');
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      const maxOpen = Number(cfg.maxOpenPerUser) || 1;
+      const userId = message.author.id;
+
+      // check open tickets for this user
+      const existing = message.guild.channels.cache.filter(c => c.topic && c.topic.startsWith(`ticket:${userId}:`));
+      if (existing.size >= maxOpen) return message.reply('Du hast bereits ein offenes Ticket. Bitte schließe es zuerst.');
+
+      // prepare names
+      const rawName = message.author.username || `user-${userId}`;
+      const categoryName = rawName;
+      let channelName = rawName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').substring(0, 90) || `ticket-${userId}`;
+
+      // permission overwrites - ensure role/user objects are resolved (avoid InvalidType)
+      const everyone = message.guild.roles.everyone;
+      // ensure member is cached
+      const memberObj = await message.guild.members.fetch(userId).catch(() => null);
+      // resolve staff role object (by id or name)
+      let staffRoleObj = null;
+      if (cfg.staffRoleId) {
+        const rid = String(cfg.staffRoleId).replace(/[<@&>]/g, '');
+        staffRoleObj = message.guild.roles.cache.get(rid) || message.guild.roles.cache.find(r => r.name === String(cfg.staffRoleId));
+      }
+      const overwrites = [ { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] } ];
+      if (staffRoleObj) overwrites.push({ id: staffRoleObj.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageMessages, PermissionsBitField.Flags.ManageChannels] });
+      if (memberObj) overwrites.push({ id: memberObj.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+      else overwrites.push({ id: userId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+
+      try {
+        // create category
+        const category = await message.guild.channels.create({ name: categoryName, type: 4, permissionOverwrites: overwrites }).catch(async (e) => {
+          // fallback: try with a unique suffix
+          const altName = `${categoryName}-${Date.now().toString().slice(-4)}`;
+          return await message.guild.channels.create({ name: altName, type: 4, permissionOverwrites: overwrites });
+        });
+
+        // ensure unique channel name under guild
+        let uniqueName = channelName;
+        if (message.guild.channels.cache.some(c => c.name === uniqueName && c.parentId === category.id)) uniqueName = `${uniqueName}-${userId.slice(-4)}`;
+
+        const topic = `ticket:${userId}:support`;
+        const ticketChannel = await message.guild.channels.create({ name: uniqueName, type: 0, parent: category.id, permissionOverwrites: overwrites, topic });
+
+        const embed = new EmbedBuilder().setTitle('Neues Ticket').setDescription(`Ticket von <@${userId}> — Typ: **support**`).setColor(0x8A2BE2).addFields({ name: 'Hinweis', value: 'Staff wird sich so schnell wie möglich darum kümmern. Nutze den Button unten, um das Ticket zu schließen.' });
+        const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
+        const row = new ActionRowBuilder().addComponents(closeBtn);
+
+        await ticketChannel.send({ content: `<@${userId}>`, embeds: [embed], components: [row] }).catch(()=>{});
+
+        // notify user
+        await message.reply({ content: `Dein Ticket wurde erstellt: ${ticketChannel}` });
+
+        // log
+        try {
+          await sendLog(message.guild, { embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${ticketChannel} erstellt von <@${userId}> Typ: support`)] });
+        } catch (e) { console.error('ticket log send failed', e); }
+
+      } catch (e) {
+        console.error('ticket create failed', e);
+        return message.reply('Fehler beim Erstellen des Tickets.');
+      }
+
+      return;
+    }
+  } catch (e) { console.error('ticket command check failed', e); }
   // Auto-mod: configurable: prevent users with blocked roles from posting invites/links
   if (message.guild && message.member) {
     try {
@@ -355,6 +580,99 @@ client.on('messageCreate', async (message) => {
   // Blacklist command starts with dash
   if (message.content.startsWith('-')) {
     const [cmd, ...rest] = message.content.slice(1).trim().split(/\s+/);
+    const lcmd = String(cmd || '').toLowerCase();
+    if (lcmd === 'purg' || lcmd === 'purge') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return message.reply('You lack permission to purge messages.');
+      const want = Math.max(1, Math.min(1000, parseInt(rest[0], 10) || 1));
+      const userArg = rest[1];
+      // If no userArg provided: delete the last `want` messages in the channel (any author)
+      if (!userArg) {
+        try {
+          const collected = [];
+          let lastId = null;
+          while (collected.length < want) {
+            const fetchOpts = { limit: 100 };
+            if (lastId) fetchOpts.before = lastId;
+            const fetched = await message.channel.messages.fetch(fetchOpts).catch(() => null);
+            if (!fetched || fetched.size === 0) break;
+            for (const m of fetched.values()) {
+              if (collected.length >= want) break;
+              if (m.id === message.id) continue; // skip the command message
+              collected.push(m);
+            }
+            lastId = fetched.last() ? fetched.last().id : null;
+            if (!lastId || fetched.size < 100) break;
+          }
+          if (!collected.length) return message.reply('No recent messages found to delete.');
+          const toDelete = collected.slice(0, want);
+          let deletedTotal = 0;
+          while (toDelete.length > 0) {
+            const batch = toDelete.splice(0, 100);
+            const ids = batch.map(x => x.id);
+            const deleted = await message.channel.bulkDelete(ids, true).catch(() => null);
+            if (deleted && deleted.size) deletedTotal += deleted.size;
+            else deletedTotal += ids.length;
+            await new Promise(r => setTimeout(r, 250));
+          }
+          const chConfirm = createChannelConfirmEmbed(`Deleted ${deletedTotal} messages from this channel.`);
+          await message.channel.send({ embeds: [chConfirm] }).catch(()=>{});
+          const logEmbed = new EmbedBuilder().setTitle('Messages purged').setColor(0xE74C3C)
+            .addFields(
+              { name: 'Deleted', value: `${deletedTotal}`, inline: true },
+              { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
+            ).setTimestamp();
+          await sendLog(message.guild, { embeds: [logEmbed], category: 'moderation' }).catch(()=>{});
+        } catch (e) {
+          console.error('purg command failed', e);
+          return message.reply('Failed to purge messages.');
+        }
+        return;
+      }
+
+      // Otherwise, target the specified user and delete their recent messages
+      let targetId = (parseId(userArg) || userArg.replace(/[<@!>]/g, ''));
+      if (!targetId) return message.reply('Usage: -purg <count> [user mention|id]');
+      try {
+        const collected = [];
+        let lastId = null;
+        while (collected.length < want) {
+          const fetchOpts = { limit: 100 };
+          if (lastId) fetchOpts.before = lastId;
+          const fetched = await message.channel.messages.fetch(fetchOpts).catch(() => null);
+          if (!fetched || fetched.size === 0) break;
+          for (const m of fetched.values()) {
+            if (collected.length >= want) break;
+            if (m.author && String(m.author.id) === String(targetId) && m.id !== message.id) collected.push(m);
+          }
+          lastId = fetched.last() ? fetched.last().id : null;
+          if (!lastId || fetched.size < 100) break;
+        }
+        if (!collected.length) return message.reply('No recent messages found for that user to delete.');
+        const toDelete = collected.slice(0, want);
+        let deletedTotal = 0;
+        while (toDelete.length > 0) {
+          const batch = toDelete.splice(0, 100);
+          const ids = batch.map(x => x.id);
+          const deleted = await message.channel.bulkDelete(ids, true).catch(() => null);
+          if (deleted && deleted.size) deletedTotal += deleted.size;
+          else deletedTotal += ids.length;
+          await new Promise(r => setTimeout(r, 250));
+        }
+        const chConfirm = createChannelConfirmEmbed(`Deleted ${deletedTotal} messages from <@${targetId}>.`);
+        await message.channel.send({ embeds: [chConfirm] }).catch(()=>{});
+        const logEmbed = new EmbedBuilder().setTitle('Messages purged').setColor(0xE74C3C)
+          .addFields(
+            { name: 'User', value: `${targetId}`, inline: true },
+            { name: 'Deleted', value: `${deletedTotal}`, inline: true },
+            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [logEmbed], category: 'moderation' }).catch(()=>{});
+      } catch (e) {
+        console.error('purg command failed', e);
+        return message.reply('Failed to purge messages.');
+      }
+      return;
+    }
     if (cmd.toLowerCase() === 'blacklist') {
       if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('You lack permission to blacklist users.');
       const id = parseId(rest[0]) || rest[0];
@@ -391,6 +709,22 @@ client.on('messageCreate', async (message) => {
 
       return message.channel.send({ embeds: [embed] });
     }
+  }
+
+  // Log blacklist action to configured channel
+  if (message.content.startsWith('-') && message.content.slice(1).trim().split(/\s+/)[0].toLowerCase() === 'blacklist') {
+    try {
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      if (message.guild && cfg.logChannelId) {
+        const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+          const embed = new EmbedBuilder().setTitle('Blacklist updated').setColor(0x8A2BE2)
+            .setDescription(`ID blacklisted by ${message.author.tag}`)
+            .addFields({ name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true });
+          await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+        }
+      }
+    } catch (e) { console.error('blacklist log failed', e); }
   }
 
   // Admin modlog edits via * commands
@@ -446,6 +780,110 @@ client.on('messageCreate', async (message) => {
   const [raw, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = raw.toLowerCase();
 
+  // Log executed command to configured log channel
+  try {
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    if (message.guild && cfg.logChannelId) {
+      const logCh = message.guild.channels.cache.get(cfg.logChannelId) || findLogChannel(message.guild);
+      if (logCh && isTextLike(logCh)) {
+        const embed = new EmbedBuilder()
+          .setTitle('Command executed')
+          .setColor(0x3498DB)
+          .addFields(
+            { name: 'User', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+            { name: 'Command', value: `${PREFIX}${command} ${args.join(' ')}`.trim(), inline: true },
+            { name: 'Channel', value: `${message.channel ? message.channel.name : 'DM'}`, inline: true }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [embed] });
+      }
+    }
+  } catch (e) { console.error('command log failed', e); }
+
+  // Help command: list available commands in the usual embed style
+  if (command === 'help' || command === 'h') {
+    const helpEmbed = createChannelConfirmEmbed('Here is a list of commands I support:');
+    helpEmbed.setTitle('Help — Commands');
+    helpEmbed.addFields(
+      { name: '!help', value: 'Show this help message', inline: true },
+      { name: '!ticket', value: 'Create a support ticket', inline: true },
+      { name: '!close', value: 'Close a ticket (staff only)', inline: true },
+      { name: '!warn <user|id> [reason]', value: 'Warn a user (DM + modlog)', inline: false },
+      { name: '!ban <user|id> [reason]', value: 'Ban a user', inline: true },
+      { name: '!unban <id>', value: 'Unban a user by ID', inline: true },
+      { name: '!mute <user|id> <minutes>', value: 'Timeout a user for minutes', inline: true },
+      { name: '!unmute <user|id>', value: 'Remove timeout from a user', inline: true },
+      { name: '!md | !modlogs <user>', value: 'Show modlogs for a user', inline: false },
+      { name: '-blacklist <id> [reason]', value: 'Add an ID to blacklist (dash command)', inline: false },
+      { name: '!role <user> <role>', value: 'Assign a role to a user', inline: true },
+      { name: '!del | !delete <channel>', value: 'Delete a channel (confirm required)', inline: true },
+      { name: '!santa, !gift, !snow, !joke, !advent, !music', value: 'Fun / utility commands (see README for details)', inline: false }
+    );
+    return message.channel.send({ embeds: [helpEmbed] });
+  }
+
+  // Say command: bot repeats provided message (no mention pings)
+  if (command === 'say') {
+    const text = args.join(' ').trim();
+    if (!text) return message.reply('Usage: !say <message>');
+    try {
+      await message.channel.send({ content: text, allowedMentions: { parse: [] } });
+    } catch (e) {
+      console.error('say command failed', e);
+      return message.reply('Failed to send message.');
+    }
+    return;
+  }
+
+  // Moderator/Staff command to close a ticket: must be used in a ticket channel
+  if (command === 'close') {
+    if (!message.guild) return message.reply('Dieses Kommando muss in einem Server verwendet werden.');
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const member = message.member;
+    const isStaff = (cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+    if (!isStaff) return message.reply('Nur Moderatoren oder Server-Admins können dieses Kommando verwenden.');
+
+    const channel = message.channel;
+    if (!channel || !channel.topic || !channel.topic.startsWith('ticket:')) return message.reply('Dieses Kommando funktioniert nur in Ticket-Kanälen.');
+
+    const parts = channel.topic.split(':');
+    const ownerId = parts[1];
+    const reason = args.join(' ') || `Geschlossen durch ${message.author.tag}`;
+
+    try {
+      // create transcript
+      const folder = path.join(DATA_DIR, cfg.transcriptFolder || 'transcripts');
+      if (!fs.existsSync(folder)) fs.mkdirSync(folder, { recursive: true });
+      const { txtPath, htmlPath } = await createTranscript(channel, folder).catch(()=>({ txtPath: null, htmlPath: null }));
+
+      // send transcript to log
+      try {
+        if (cfg.logChannelId) {
+          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh) await sendLog(message.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${message.author.id}>\nGrund: ${reason}`)], files: [txtPath].filter(Boolean) });
+        }
+      } catch (e) { console.error('failed to send transcript to log channel', e); }
+
+      // DM owner
+      try { const owner = await client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
+
+      // remove category and its channels
+      try {
+        const parent = channel.parent;
+        if (parent) {
+          parent.children.each(async (ch) => { try { await ch.delete().catch(()=>{}); } catch(e){} });
+          await parent.delete().catch(()=>{});
+        } else {
+          await channel.delete().catch(()=>{});
+        }
+      } catch (e) { console.error('failed to remove ticket channels/category', e); }
+
+      return message.channel.send('Ticket geschlossen und entfernt.');
+    } catch (e) {
+      console.error('close command failed', e);
+      return message.reply('Fehler beim Schließen des Tickets.');
+    }
+  }
+
   // Helper to resolve a user by mention or id
   async function resolveUser(arg) {
     const id = parseId(arg) || arg;
@@ -479,6 +917,24 @@ client.on('messageCreate', async (message) => {
     await sendModEmbedToUser(targetUser, 'Warn', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
 
     const text = `User ${targetUser.tag} (${targetUser.id}) was warned. | ${reason}`;
+    // send to log channel
+    try {
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      if (message.guild && cfg.logChannelId) {
+        const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+            const embed = new EmbedBuilder().setTitle('User warned').setColor(0xF1C40F)
+              .addFields(
+                { name: 'User', value: `${targetUser.tag} (${targetUser.id})`, inline: true },
+                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                { name: 'Reason', value: `${reason}`, inline: false },
+                { name: 'Case ID', value: `${caseId}`, inline: true }
+              ).setTimestamp();
+            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+          }
+      }
+    } catch (e) { console.error('warn log failed', e); }
+
     return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
   }
 
@@ -502,9 +958,39 @@ client.on('messageCreate', async (message) => {
     // Ban in guild
     try {
       await message.guild.members.ban(id, { reason: `${message.author.tag}: ${reason}` });
+      // send a copy to the configured log channel (if any)
+      try {
+        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+        if (cfg.logChannelId) {
+          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+            const embed = new EmbedBuilder()
+              .setTitle('User banned')
+              .setColor(0xE74C3C)
+              .addFields(
+                { name: 'User', value: `${id}`, inline: true },
+                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                { name: 'Reason', value: `${reason}`, inline: false },
+                { name: 'Case ID', value: `${caseId}`, inline: true }
+              ).setTimestamp();
+            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+          }
+        }
+      } catch (e) { console.error('ban log failed', e); }
+
       const text = `User ${id} was banned. | ${reason}`;
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
     } catch (e) {
+      try {
+        const embed = new EmbedBuilder().setTitle('Ban failed').setColor(0xE74C3C)
+          .addFields(
+            { name: 'Target', value: `${id}`, inline: true },
+            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+            { name: 'Case ID', value: `${caseId}`, inline: true },
+            { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+      } catch (err) { console.error('ban failure log failed', err); }
       return message.reply('Failed to ban user — maybe invalid ID or lack of permissions.');
     }
   }
@@ -523,9 +1009,35 @@ client.on('messageCreate', async (message) => {
       const user = await client.users.fetch(id).catch(() => null);
       if (user) await sendModEmbedToUser(user, 'Unban', { guild: message.guild, moderatorTag: message.author.tag, reason: 'You were unbanned', caseId });
 
+      // log to configured channel
+      try {
+        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+        if (message.guild && cfg.logChannelId) {
+          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+            const embed = new EmbedBuilder().setTitle('User unbanned').setColor(0x2ECC71)
+              .addFields(
+                { name: 'User', value: `${id}`, inline: true },
+                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                { name: 'Case ID', value: `${caseId}`, inline: true }
+              ).setTimestamp();
+            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+          }
+        }
+      } catch (e) { console.error('unban log failed', e); }
+
       const text = `User ${id} was unbanned.`;
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
     } catch (e) {
+      try {
+        const embed = new EmbedBuilder().setTitle('Unban failed').setColor(0xE74C3C)
+          .addFields(
+            { name: 'Target', value: `${id}`, inline: true },
+            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+            { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+      } catch (err) { console.error('unban failure log failed', err); }
       return message.reply('Failed to unban — check the ID and that the user is banned.');
     }
   }
@@ -549,8 +1061,36 @@ client.on('messageCreate', async (message) => {
       await sendModEmbedToUser(member.user, 'Mute', { guild: message.guild, moderatorTag: message.author.tag, reason: `Timeout ${minutes} minutes`, caseId });
 
       const text = `User ${member.user.tag} was muted for ${minutes} minutes.`;
+      // log mute
+      try {
+        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+        if (message.guild && cfg.logChannelId) {
+          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+            const embed = new EmbedBuilder().setTitle('User muted').setColor(0xF39C12)
+              .addFields(
+                { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
+                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                { name: 'Duration', value: `${minutes} minutes`, inline: true },
+                { name: 'Case ID', value: `${caseId}`, inline: true }
+              ).setTimestamp();
+            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+          }
+        }
+      } catch (e) { console.error('mute log failed', e); }
+
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
     } catch (e) {
+      try {
+        const embed = new EmbedBuilder().setTitle('Mute failed').setColor(0xF39C12)
+          .addFields(
+            { name: 'Target', value: `${member ? (member.user.tag + ` (${member.id})`) : String(args[0]||'unknown')}`, inline: true },
+            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+            { name: 'Duration', value: `${minutes} minutes`, inline: true },
+            { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+      } catch (err) { console.error('mute failure log failed', err); }
       return message.reply('Failed to mute the member — missing permissions or hierarchy issue.');
     }
   }
@@ -570,8 +1110,33 @@ client.on('messageCreate', async (message) => {
       await sendModEmbedToUser(member.user, 'Unmute', { guild: message.guild, moderatorTag: message.author.tag, reason: 'You were unmuted', caseId });
 
       const text = `User ${member.user.tag} was unmuted.`;
+      try {
+        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+        if (message.guild && cfg.logChannelId) {
+          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+          if (logCh && isTextLike(logCh)) {
+            const embed = new EmbedBuilder().setTitle('User unmuted').setColor(0x2ECC71)
+              .addFields(
+                { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
+                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                { name: 'Case ID', value: `${caseId}`, inline: true }
+              ).setTimestamp();
+            await sendLog(message.guild, { embeds: [embed] });
+          }
+        }
+      } catch (e) { console.error('unmute log failed', e); }
+
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
     } catch (e) {
+      try {
+        const embed = new EmbedBuilder().setTitle('Unmute failed').setColor(0xE74C3C)
+          .addFields(
+            { name: 'Target', value: `${member ? (member.user.tag + ` (${member.id})`) : String(args[0]||'unknown')}`, inline: true },
+            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+            { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+          ).setTimestamp();
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+      } catch (err) { console.error('unmute failure log failed', err); }
       return message.reply('Failed to unmute the member.');
     }
   }
@@ -839,10 +1404,33 @@ client.on('messageCreate', async (message) => {
           try {
             await channel.delete(`${message.author.tag}: requested by command`);
             appendActionMd(message.guild, message.author.tag, 'Channel Deleted', `Deleted channel ${channel.name} (${channel.id})`);
-            return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`Deleted channel ${channel.name}`)] });
+              // send log
+              try {
+                const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+                if (message.guild && cfg.logChannelId) {
+                  const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+                    if (logCh && isTextLike(logCh)) {
+                    const embed = new EmbedBuilder().setTitle('Channel deleted').setColor(0xE74C3C)
+                      .setDescription(`Deleted channel ${channel.name} (${channel.id})`)
+                      .addFields({ name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true });
+                    await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+                  }
+                }
+              } catch (e) { console.error('del log failed', e); }
+
+              return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`Deleted channel ${channel.name}`)] });
           } catch (e) {
             console.error('delete channel error', e);
             appendActionMd(message.guild, message.author.tag, 'Channel Deletion Failed', `Failed to delete ${channel.name} (${channel.id}) — ${String(e)}`);
+            try {
+              const embed = new EmbedBuilder().setTitle('Channel deletion failed').setColor(0xE74C3C)
+                .setDescription(`Failed to delete channel ${channel.name} (${channel.id})`)
+                .addFields(
+                  { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+                  { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+                ).setTimestamp();
+              await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+            } catch (err) { console.error('del failure log failed', err); }
             return message.reply('Failed to delete channel — missing permissions or role hierarchy.');
           }
         } else {
@@ -870,10 +1458,36 @@ client.on('messageCreate', async (message) => {
       try {
         await member.roles.add(role, `${message.author.tag}: assigned via command`);
         appendActionMd(message.guild, message.author.tag, 'Role Assigned', `Assigned role ${role.name} (${role.id}) to ${member.user.tag} (${member.id})`);
+        try {
+          const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+          if (message.guild && cfg.logChannelId) {
+            const logCh = message.guild.channels.cache.get(cfg.logChannelId);
+              if (logCh && isTextLike(logCh)) {
+              const embed = new EmbedBuilder().setTitle('Role assigned').setColor(0x8A2BE2)
+                .addFields(
+                  { name: 'Role', value: `${role.name} (${role.id})`, inline: true },
+                  { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
+                  { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
+                ).setTimestamp();
+              await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+            }
+          }
+        } catch (e) { console.error('role assign log failed', e); }
+
         return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`Assigned role **${role.name}** to ${member.user.tag}`)] });
       } catch (e) {
         console.error('role assign error', e);
         appendActionMd(message.guild, message.author.tag, 'Role Assignment Failed', `Failed to assign role ${role ? role.name : '(unknown)'} to ${member ? member.user.tag : '(unknown)'} — ${String(e)}`);
+        try {
+          const embed = new EmbedBuilder().setTitle('Role assignment failed').setColor(0xE74C3C)
+            .addFields(
+              { name: 'Role', value: `${role ? `${role.name} (${role.id})` : '(unknown)'}`, inline: true },
+              { name: 'User', value: `${member ? `${member.user.tag} (${member.id})` : '(unknown)'}`, inline: true },
+              { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
+              { name: 'Error', value: `${String(e.message || e)}`, inline: false }
+            ).setTimestamp();
+          await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+        } catch (err) { console.error('role failure log failed', err); }
         return message.reply('Failed to assign role — check bot role hierarchy and permissions.');
       }
     }
