@@ -3,7 +3,16 @@ const path = require('path');
 // Load .env into process.env when present (safe if dotenv isn't installed)
 try { require('dotenv').config(); } catch (e) {}
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { createTranscript } = require('./utils/transcript');
+
+// Safe import of transcript with fallback
+let createTranscript = null;
+try {
+  const transcriptModule = require('./utils/transcript');
+  createTranscript = transcriptModule.createTranscript;
+} catch (e) {
+  console.warn('⚠️ Transcript module not available:', e.message);
+  createTranscript = async () => ({ txtPath: null, htmlPath: null });
+}
 
 const DATA_DIR = __dirname;
 const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
