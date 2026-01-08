@@ -189,15 +189,6 @@ client.on('interactionCreate', async (interaction) => {
   } catch (e) { console.error('ticket_close button handler error', e); }
 
   // Music features disabled (requires @discordjs/voice)
-    const nextBtn = new ButtonBuilder().setCustomId(`music_page_${guildId}_${nextPage}`).setLabel('Next ▶️').setStyle(ButtonStyle.Primary).setDisabled(page === (totalPages - 1));
-    const row2 = new ActionRowBuilder().addComponents(prevBtn, nextBtn);
-
-    try {
-      return interaction.update({ embeds: [embed], components: [row1, row2] });
-    } catch (e) {
-      try { return interaction.message.edit({ embeds: [embed], components: [row1, row2] }); } catch (err) { console.error('pagination edit failed', err); }
-    }
-  }
 });
 
 function sendModEmbedToUser(user, type, { guild, moderatorTag, reason, caseId }) {
