@@ -1,7 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 // Load .env into process.env when present (safe if dotenv isn't installed)
-try { require('dotenv').config(); } catch (e) {}
+try { 
+  require('dotenv').config({ path: path.join(__dirname, '.env') }); 
+  console.log('✅ .env file loaded');
+} catch (e) { 
+  console.warn('⚠️ dotenv not available or .env not found');
+}
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Safe import of transcript with fallback - prevents crash if file missing on server
@@ -1778,5 +1783,8 @@ client.on('messageCreate', async (message) => {
 });
 
 client.login(process.env.DISCORD_TOKEN).catch((e) => {
-  console.error('Failed to login — set DISCORD_TOKEN env variable', e);
+  console.error('❌ Failed to login — DISCORD_TOKEN not set or invalid!');
+  console.error('Current DISCORD_TOKEN:', process.env.DISCORD_TOKEN ? 'SET (hidden)' : 'NOT SET');
+  console.error('Error:', e.message);
+  process.exit(1);
 });
