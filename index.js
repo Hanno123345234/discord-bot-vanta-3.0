@@ -3,13 +3,7 @@ const path = require('path');
 // Load .env into process.env when present (safe if dotenv isn't installed)
 try { require('dotenv').config(); } catch (e) {}
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { joinVoiceChannel, getVoiceConnection, createAudioPlayer, createAudioResource, AudioPlayerStatus, StreamType } = require('@discordjs/voice');
 const { createTranscript } = require('./utils/transcript');
-let ffmpegPath = null;
-try { ffmpegPath = require('ffmpeg-static'); } catch (e) { ffmpegPath = 'ffmpeg'; }
-const { spawn } = require('child_process');
-
-const musicPlayers = new Map(); // guildId -> { player, files, index, connection, playNext }
 
 const DATA_DIR = __dirname;
 const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
@@ -139,54 +133,6 @@ function humanDuration(ms) {
   return parts.join(' ');
 }
 
-function startMusicForGuild(guildId, connection) {
-  const folder = path.join(DATA_DIR, 'music', 'christmas');
-  if (!fs.existsSync(folder)) return false;
-  const files = fs.readdirSync(folder).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f)).map(f => path.join(folder, f));
-  if (!files.length) return false;
-
-  let entry = musicPlayers.get(guildId);
-  if (!entry) {
-    const player = createAudioPlayer();
-    entry = { player, files, index: 0, connection, playNext: null, volume: 1.0 };
-    musicPlayers.set(guildId, entry);
-    connection.subscribe(player);
-
-    const playNext = () => {
-      const e = musicPlayers.get(guildId);
-      if (!e) return;
-      const file = e.files[e.index];
-      let ffmpeg = null;
-      try {
-        const volArg = `volume=${e.volume || 1.0}`;
-        ffmpeg = spawn(ffmpegPath, ['-re', '-i', file, '-analyzeduration', '0', '-loglevel', '0', '-af', volArg, '-f', 's16le', '-ar', '48000', '-ac', '2', 'pipe:1']);
-      } catch (err) {
-        console.error('Failed to spawn ffmpeg for', file, err);
-        e.index = (e.index + 1) % e.files.length;
-        setTimeout(playNext, 1000);
-        return;
-      }
-      ffmpeg.on('error', (err) => console.error('ffmpeg error', err));
-      if (!ffmpeg.stdout) { e.index = (e.index + 1) % e.files.length; setTimeout(playNext, 1000); return; }
-      const resource = createAudioResource(ffmpeg.stdout, { inputType: StreamType.Raw });
-      e.player.play(resource);
-      e.index = (e.index + 1) % e.files.length;
-    };
-
-    entry.playNext = playNext;
-    player.on('stateChange', (oldState, newState) => { if (newState.status === AudioPlayerStatus.Idle) setImmediate(playNext); });
-    player.on('error', (err) => { console.error('Music player error', err); setTimeout(() => { if (musicPlayers.has(guildId)) entry.playNext(); }, 1000); });
-    setImmediate(playNext);
-    return true;
-  } else {
-    entry.connection = connection;
-    entry.files = files;
-    if (entry.index >= entry.files.length) entry.index = 0;
-    if (entry.playNext) setImmediate(entry.playNext);
-    return true;
-  }
-}
-
 client.on('interactionCreate', async (interaction) => {
   // Handle ticket close button interactions
   try {
@@ -242,56 +188,7 @@ client.on('interactionCreate', async (interaction) => {
     }
   } catch (e) { console.error('ticket_close button handler error', e); }
 
-  // Handle select menu and pagination buttons
-  const folder = path.join(DATA_DIR, 'music', 'christmas');
-  const files = fs.existsSync(folder) ? fs.readdirSync(folder).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f)) : [];
-
-  if (interaction.isStringSelectMenu() && interaction.customId.startsWith('music_select_')) {
-    await interaction.deferReply({ ephemeral: true });
-    const guildId = interaction.guildId;
-    const selection = interaction.values[0];
-    const index = parseInt(selection, 10);
-    if (isNaN(index) || index < 0 || index >= files.length) return interaction.editReply('Invalid selection.');
-    const member = interaction.member;
-    const targetChannel = member.voice.channel;
-    if (!targetChannel) return interaction.editReply('You must be in a voice channel to use this.');
-    try {
-      const connection = joinVoiceChannel({ channelId: targetChannel.id, guildId, adapterCreator: interaction.guild.voiceAdapterCreator });
-      const started = startMusicForGuild(guildId, connection);
-      if (!started) return interaction.editReply('No music files found.');
-      const entry = musicPlayers.get(guildId);
-      if (entry) { entry.index = index; if (entry.playNext) setImmediate(entry.playNext); }
-      return interaction.editReply(`Playing **${files[index]}** in ${targetChannel.name}`);
-    } catch (e) {
-      console.error('interaction play error', e);
-      return interaction.editReply('Failed to join voice channel.');
-    }
-  }
-
-  if (interaction.isButton() && interaction.customId.startsWith('music_page_')) {
-    await interaction.deferUpdate();
-    // customId format: music_page_<guildId>_<page>
-    const parts = interaction.customId.split('_');
-    const guildId = parts[2];
-    const page = parseInt(parts[3], 10) || 0;
-    const pageSize = 25;
-    const start = page * pageSize;
-    const pageFiles = files.slice(start, start + pageSize);
-    const embed = new EmbedBuilder()
-      .setColor(0x8A2BE2)
-      .setTitle('🎄 Christmas Music')
-      .setDescription(pageFiles.map((f, i) => `${start + i + 1}. ${f.length > 90 ? f.substring(0, 87) + '...' : f}`).join('\n'))
-      .setFooter({ text: `Page ${page + 1} / ${Math.max(1, Math.ceil(files.length / pageSize))}` });
-
-    const options = pageFiles.map((f, i) => ({ label: `${start + i + 1}. ${f.length > 80 ? f.substring(0, 77) + '...' : f}`, value: String(start + i), emoji: '🎵' }));
-    const select = new StringSelectMenuBuilder().setCustomId(`music_select_${guildId}`).setPlaceholder('🎄 Wähle einen Titel...').addOptions(options);
-    const row1 = new ActionRowBuilder().addComponents(select);
-
-    // pagination buttons
-    const totalPages = Math.max(1, Math.ceil(files.length / pageSize));
-    const prevPage = Math.max(0, page - 1);
-    const nextPage = Math.min(totalPages - 1, page + 1);
-    const prevBtn = new ButtonBuilder().setCustomId(`music_page_${guildId}_${prevPage}`).setLabel('◀️ Prev').setStyle(ButtonStyle.Primary).setDisabled(page === 0);
+  // Music features disabled (requires @discordjs/voice)
     const nextBtn = new ButtonBuilder().setCustomId(`music_page_${guildId}_${nextPage}`).setLabel('Next ▶️').setStyle(ButtonStyle.Primary).setDisabled(page === (totalPages - 1));
     const row2 = new ActionRowBuilder().addComponents(prevBtn, nextBtn);
 
@@ -1303,81 +1200,8 @@ client.on('messageCreate', async (message) => {
   }
 
   if (command === 'music') {
-    const sub = args[0] ? args[0].toLowerCase() : 'list';
-    const folder = path.join(DATA_DIR, 'music', 'christmas');
-    if (!fs.existsSync(folder)) return message.reply('No music folder found (music/christmas).');
-    const files = fs.readdirSync(folder).filter(f => /\.(mp3|wav|ogg|m4a)$/i.test(f));
-
-    if (sub === 'list') {
-      if (!files.length) return message.reply('No music files found in music/christmas.');
-      // send first page (page 0)
-      const page = 0;
-      const pageSize = 25;
-      const start = page * pageSize;
-      const pageFiles = files.slice(start, start + pageSize);
-      const embed = new EmbedBuilder()
-        .setColor(0x8A2BE2)
-        .setTitle('🎄 Christmas Music')
-        .setDescription(pageFiles.map((f, i) => `${start + i + 1}. ${f.length > 90 ? f.substring(0, 87) + '...' : f}`).join('\n'))
-        .setFooter({ text: 'Wähle einen Titel aus dem Menü oder benutze !music play <num>' });
-
-      const options = pageFiles.map((f, i) => ({ label: `${start + i + 1}. ${f.length > 80 ? f.substring(0, 77) + '...' : f}`, value: String(start + i), emoji: '🎵' }));
-      const select = new StringSelectMenuBuilder().setCustomId(`music_select_${message.guild.id}`).setPlaceholder('🎄 Wähle einen Titel...').addOptions(options);
-      const row1 = new ActionRowBuilder().addComponents(select);
-
-      // pagination row
-      const totalPages = Math.max(1, Math.ceil(files.length / pageSize));
-      const prevBtn = new ButtonBuilder().setCustomId(`music_page_${message.guild.id}_0`).setLabel('◀️ Prev').setStyle(ButtonStyle.Primary).setDisabled(true);
-      const nextBtn = new ButtonBuilder().setCustomId(`music_page_${message.guild.id}_1`).setLabel('Next ▶️').setStyle(ButtonStyle.Primary).setDisabled(totalPages <= 1);
-      const row2 = new ActionRowBuilder().addComponents(prevBtn, nextBtn);
-
-      return message.channel.send({ embeds: [embed], components: [row1, row2] });
-    }
-
-    if (sub === 'play') {
-      const which = args[1];
-      if (!which) return message.reply('Usage: !music play <number|name> [channel]');
-      let index = parseInt(which, 10);
-      if (isNaN(index)) { index = files.findIndex(f => f.toLowerCase().includes(which.toLowerCase())); } else { index = index - 1; }
-      if (index < 0 || index >= files.length) return message.reply('Invalid track number/name. Use !music list.');
-      // channel arg
-      let targetChannel = null;
-      if (args[2]) { const chId = args[2].replace(/[<#>]/g, ''); targetChannel = message.guild.channels.cache.get(chId) || message.guild.channels.cache.find(c => c.name === args[2]); }
-      if (!targetChannel) targetChannel = message.member.voice.channel;
-      if (!targetChannel) return message.reply('You must be in a voice channel or provide one.');
-      try {
-        const connection = joinVoiceChannel({ channelId: targetChannel.id, guildId: message.guild.id, adapterCreator: message.guild.voiceAdapterCreator });
-        const started = startMusicForGuild(message.guild.id, connection);
-        if (!started) return message.reply('No music files found.');
-        const entry = musicPlayers.get(message.guild.id);
-        if (entry) { entry.index = index; if (entry.playNext) setImmediate(entry.playNext); }
-        return message.reply(`Playing **${files[index]}** in ${targetChannel.name}.`);
-      } catch (e) { console.error('music play error', e); return message.reply('Failed to start playback.'); }
-    }
-
-    if (sub === 'stop') {
-      const entry = musicPlayers.get(message.guild.id);
-      if (entry) { try { entry.player.stop(); } catch {} musicPlayers.delete(message.guild.id); }
-      const conn = getVoiceConnection(message.guild.id);
-      if (conn) conn.destroy();
-      return message.reply('Stopped music and left.');
-    }
-
-    if (sub === 'volume') {
-      const v = args[1];
-      if (!v) return message.reply('Usage: !music volume <0-100>');
-      const num = parseInt(v.replace(/[^0-9]/g, ''), 10);
-      if (isNaN(num) || num < 0 || num > 100) return message.reply('Provide a number between 0 and 100.');
-      const entry = musicPlayers.get(message.guild.id);
-      if (!entry) return message.reply('No active music player in this guild. Use !join or !music play first.');
-      entry.volume = Math.max(0, Math.min(5, num / 100));
-      // restart current track
-      try { entry.player.stop(); } catch (e) {}
-      if (entry.playNext) setImmediate(entry.playNext);
-      return message.reply(`Set volume to ${num}%`);
-    }
-
-    return message.reply('Unknown subcommand. Use `!music list`, `!music play <num|name> [channel]`, or `!music stop`.');
+    // Music command disabled (requires @discordjs/voice)
+    return message.reply('Music commands are currently disabled.');
   }
 
     if (command === 'del' || command === 'delete') {
