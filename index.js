@@ -8,6 +8,7 @@ const { createTranscript } = require('./utils/transcript');
 const DATA_DIR = __dirname;
 const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
 const BLACKLIST_PATH = path.join(DATA_DIR, 'blacklist.json');
+const DESTAFFS_PATH = path.join(DATA_DIR, 'destaffs.json');
 
 function loadJson(p, fallback) {
   try {
@@ -42,6 +43,7 @@ function appendActionMd(guild, moderatorTag, title, details) {
 
 let modlogs = loadJson(MODLOGS_PATH, { lastCase: 10000, cases: [] });
 let blacklist = loadJson(BLACKLIST_PATH, { blacklisted: [] });
+let destaffs = loadJson(DESTAFFS_PATH, { lastCase: 10000, cases: [] });
 
 // Automod configuration (env vars override file)
 const DEFAULT_AUTOMOD = {
@@ -76,6 +78,12 @@ function nextCase() {
   modlogs.lastCase += 1;
   saveJson(MODLOGS_PATH, modlogs);
   return modlogs.lastCase;
+}
+
+function nextDestaffCase() {
+  destaffs.lastCase += 1;
+  saveJson(DESTAFFS_PATH, destaffs);
+  return destaffs.lastCase;
 }
 
 const PREFIX = process.env.PREFIX || '!';
@@ -236,6 +244,8 @@ function formatFooterTime(ts) {
 
 client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
+  console.log(`🔥 CYBRANCEE Bot is online!`);
+  client.user.setActivity('CYBRANCEE | !help', { type: 3 });
 });
 
 // Moderation / audit style event logs: member joins/leaves, voice join/leave, message deletions
@@ -253,8 +263,43 @@ const { sendLog } = require('./utils/logger');
 
 function isTextLike(ch) { return ch && (typeof ch.isTextBased === 'function' ? ch.isTextBased() : (ch.isText && ch.isText())); }
 
+function buildFooter(guild) {
+  if (!guild) return undefined;
+  return { text: `Guild: ${guild.name} (${guild.id})` };
+}
+
 client.on('guildMemberAdd', async (member) => {
   try {
+    // Auto-assign member role
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    try {
+      const memberRole = member.guild.roles.cache.find(r => r.name.toLowerCase() === 'member') || member.guild.roles.cache.find(r => r.name.toLowerCase() === 'members');
+      if (memberRole && !member.roles.cache.has(memberRole.id)) {
+        await member.roles.add(memberRole, 'Auto-assigned on join').catch(() => {});
+      }
+    } catch (e) { console.error('Failed to assign member role', e); }
+
+    // Send welcome message to welcome channel
+    if (cfg.welcomeChannelId) {
+      const welcomeCh = member.guild.channels.cache.get(cfg.welcomeChannelId) || await member.guild.channels.fetch(cfg.welcomeChannelId).catch(() => null);
+      if (welcomeCh && isTextLike(welcomeCh)) {
+        const welcomeEmbed = new EmbedBuilder()
+          .setTitle('👋 WELCOME')
+          .setDescription(`Welcome to **${member.guild.name}**, <@${member.id}>!\n\nWe're glad to have you here. Make sure to read the rules and have fun!`)
+          .setColor(0x8A2BE2)
+          .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+          .addFields(
+            { name: 'Member', value: `${member.user.tag}`, inline: true },
+            { name: 'ID', value: `${member.id}`, inline: true },
+            { name: 'Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: false }
+          )
+          .setFooter({ text: `Member #${member.guild.memberCount}` })
+          .setTimestamp();
+        await welcomeCh.send({ embeds: [welcomeEmbed] }).catch(() => {});
+      }
+    }
+
+    // Log to audit channel
     const logCh = findLogChannel(member.guild);
     if (!logCh || !isTextLike(logCh)) return;
     const embed = new EmbedBuilder()
@@ -265,13 +310,35 @@ client.on('guildMemberAdd', async (member) => {
         { name: 'User', value: `<@${member.id}> (${member.user.tag})`, inline: true },
         { name: 'ID', value: `${member.id}`, inline: true },
         { name: 'Joined', value: `${new Date().toLocaleString()}`, inline: false }
-      ).setTimestamp();
-              await sendLog(member.guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+      ).setTimestamp()
+      .setFooter(buildFooter(member.guild));
+    await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
   } catch (e) { console.error('guildMemberAdd log failed', e); }
 });
 
 client.on('guildMemberRemove', async (member) => {
   try {
+    // Send leave message to welcome channel
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    if (cfg.welcomeChannelId) {
+      const welcomeCh = member.guild.channels.cache.get(cfg.welcomeChannelId) || await member.guild.channels.fetch(cfg.welcomeChannelId).catch(() => null);
+      if (welcomeCh && isTextLike(welcomeCh)) {
+        const leaveEmbed = new EmbedBuilder()
+          .setTitle('👋 GOODBYE')
+          .setDescription(`**${member.user.tag}** has left **${member.guild.name}**.\n\nWe hope to see you again soon!`)
+          .setColor(0xE74C3C)
+          .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+          .addFields(
+            { name: 'Member', value: `${member.user.tag}`, inline: true },
+            { name: 'ID', value: `${member.id}`, inline: true }
+          )
+          .setFooter({ text: `Member count: ${member.guild.memberCount}` })
+          .setTimestamp();
+        await welcomeCh.send({ embeds: [leaveEmbed] }).catch(() => {});
+      }
+    }
+
+    // Log to audit channel
     const logCh = findLogChannel(member.guild);
     if (!logCh || !isTextLike(logCh)) return;
     const roles = member.roles ? member.roles.cache.filter(r => r.name !== '@everyone').map(r => r.name).join(', ') : '';
@@ -283,8 +350,9 @@ client.on('guildMemberRemove', async (member) => {
         { name: 'User', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
         { name: 'ID', value: `${member.id}`, inline: true },
         { name: 'Roles', value: roles || '—', inline: false }
-      ).setTimestamp();
-              await sendLog(member.guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+      ).setTimestamp()
+      .setFooter(buildFooter(member.guild));
+    await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
   } catch (e) { console.error('guildMemberRemove log failed', e); }
 });
 
@@ -300,8 +368,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         .addFields(
           { name: 'User', value: `${newState.member.user.tag} (<@${newState.id}>)`, inline: true },
           { name: 'Channel', value: `${newState.channel ? `${newState.channel.name}` : newState.channelId}`, inline: true }
-        ).setTimestamp();
-              await sendLog(guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+        ).setTimestamp()
+        .setFooter(buildFooter(guild));
+      await sendLog(guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
     }
     // leave
     if (oldState.channelId && !newState.channelId) {
@@ -310,8 +379,9 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         .addFields(
           { name: 'User', value: `${oldState.member.user.tag} (<@${oldState.id}>)`, inline: true },
           { name: 'Channel', value: `${oldState.channel ? `${oldState.channel.name}` : oldState.channelId}`, inline: true }
-        ).setTimestamp();
-      await sendLog(guild, { embeds: [embed] });
+        ).setTimestamp()
+        .setFooter(buildFooter(guild));
+      await sendLog(guild, { embeds: [embed], category: 'mod' });
     }
   } catch (e) { console.error('voiceStateUpdate log failed', e); }
 });
@@ -326,16 +396,19 @@ client.on('messageDelete', async (message) => {
     let author = message.author;
     let content = message.content || '';
     try { if (message.partial) { const fetched = await message.fetch().catch(()=>null); if (fetched) { author = fetched.author; content = fetched.content; } } } catch(e){}
+    const link = (guild && message.channelId) ? `https://discord.com/channels/${guild.id}/${message.channelId}/${message.id}` : 'n/a';
     const embed = new EmbedBuilder()
       .setTitle('Message deleted')
       .setColor(0xE74C3C)
       .addFields(
-        { name: 'Channel', value: `${message.channel ? `${message.channel.name}` : 'Unknown'}`, inline: true },
+        { name: 'Channel', value: `${message.channel ? `${message.channel.name}` : message.channelId || 'Unknown'}`, inline: true },
         { name: 'Message ID', value: `${message.id}`, inline: true },
-        { name: 'Message author', value: author ? `${author.tag} (${author.id})` : 'Unknown', inline: false },
-        { name: 'Message', value: content ? content.substring(0, 1900) : 'Content not available', inline: false }
-      ).setTimestamp();
-              await sendLog(guild, { embeds: [embed], category: 'messages' }).catch(()=>{});
+        { name: 'Link', value: link, inline: false },
+        { name: 'Author', value: author ? `${author.tag} (${author.id})` : 'Unknown', inline: false },
+        { name: 'Message', value: content ? content.substring(0, 1800) : 'Content not available', inline: false }
+      ).setTimestamp()
+      .setFooter(buildFooter(guild));
+    await sendLog(guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
   } catch (e) { console.error('messageDelete log failed', e); }
 });
 
@@ -407,6 +480,7 @@ client.on('messageCreate', async (message) => {
         await ticketChannel.send({ content: `<@${userId}>`, embeds: [embed], components: [row] }).catch(()=>{});
 
         // notify user
+        message.delete().catch(() => {});
         await message.reply({ content: `Dein Ticket wurde erstellt: ${ticketChannel}` });
 
         // log
@@ -597,6 +671,140 @@ client.on('messageCreate', async (message) => {
 
       return message.channel.send({ embeds: [embed] });
     }
+
+    if (cmd.toLowerCase() === 'destaff' || cmd.toLowerCase() === 'destaffban') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return message.reply('You lack permission to destaff users.');
+      const id = parseId(rest[0]) || rest[0];
+      const reason = rest.slice(1).join(' ') || 'No reason provided';
+      if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID or mention.');
+
+      const shouldBan = cmd.toLowerCase() === 'destaffban';
+      let member = null;
+      try {
+        member = await message.guild.members.fetch(id).catch(() => null);
+      } catch (e) {}
+
+      if (!member) return message.reply('User not found in this guild.');
+
+      const removedRoles = [];
+      const failedRoles = [];
+      const botMember = message.guild.members.me;
+      const botHighest = botMember.roles.highest;
+      const rolesToRemove = ['staff', 'admin', 'administrator', 'moderator', 'mod'];
+
+      for (const [roleId, role] of member.roles.cache) {
+        if (role.name === '@everyone') continue;
+        if (!rolesToRemove.some(r => role.name.toLowerCase().includes(r))) continue;
+        if (role.position >= botHighest.position) {
+          failedRoles.push(role.name);
+          continue;
+        }
+        try {
+          await member.roles.remove(role, `Destaff by ${message.author.tag}: ${reason}`);
+          removedRoles.push(role.name);
+        } catch (e) {
+          failedRoles.push(role.name);
+        }
+      }
+
+      const caseId = nextDestaffCase();
+      destaffs.cases.push({ caseId, type: shouldBan ? 'DestaffBan' : 'Destaff', user: id, moderator: message.author.id, reason, removedRoles, failedRoles, time: Date.now() });
+      saveJson(DESTAFFS_PATH, destaffs);
+
+      let banResult = null;
+      if (shouldBan) {
+        try {
+          const user = await client.users.fetch(id).catch(() => null);
+          if (user) {
+            try {
+              await sendModEmbedToUser(user, 'Ban', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
+            } catch (e) {}
+          }
+          await message.guild.members.ban(id, { reason: `Destaffban by ${message.author.tag}: ${reason}` });
+          banResult = 'success';
+        } catch (e) {
+          banResult = 'failed';
+        }
+      }
+
+      const success = removedRoles.length > 0 || (shouldBan && banResult === 'success');
+      const color = success ? 0x2ECC71 : 0xE74C3C;
+      const title = shouldBan ? 'Destaffban' : 'Destaff';
+
+      const embed = new EmbedBuilder()
+        .setColor(color)
+        .setTitle(title)
+        .addFields(
+          { name: 'User', value: `<@${id}> (${id})`, inline: true },
+          { name: 'Case ID', value: `#${caseId}`, inline: true },
+          { name: 'Moderator', value: `${message.author.tag}`, inline: true },
+          { name: 'Removed Roles', value: removedRoles.length ? removedRoles.join(', ').substring(0, 1024) : 'None', inline: false },
+          { name: 'Failed Roles', value: failedRoles.length ? failedRoles.join(', ').substring(0, 1024) : 'None', inline: false },
+          { name: 'Reason', value: reason, inline: false }
+        )
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
+      if (shouldBan) {
+        embed.addFields({ name: 'Ban Status', value: banResult === 'success' ? '✅ Banned' : '❌ Ban failed', inline: true });
+      }
+
+      await message.channel.send({ embeds: [embed] });
+      await sendLog(message.guild, { embeds: [embed], category: 'mod' }).catch(() => {});
+      return;
+    }
+
+    if (cmd.toLowerCase() === 'unbll') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('You lack permission to unblacklist users.');
+      const id = parseId(rest[0]) || rest[0];
+      if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID.');
+
+      const idx = blacklist.blacklisted.findIndex(b => String(b.id) === String(id));
+      if (idx === -1) return message.reply('This ID is not in the blacklist.');
+
+      blacklist.blacklisted.splice(idx, 1);
+      saveJson(BLACKLIST_PATH, blacklist);
+
+      const embed = new EmbedBuilder()
+        .setColor(0x2ECC71)
+        .setTitle('Unblacklist')
+        .addFields(
+          { name: 'User', value: id, inline: true },
+          { name: 'Removed by', value: message.author.tag, inline: true }
+        )
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
+      return message.channel.send({ embeds: [embed] });
+    }
+
+    if (cmd.toLowerCase() === 'bll') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return message.reply('You lack permission to view blacklist.');
+
+      if (!blacklist.blacklisted.length) return message.reply('Blacklist is empty.');
+
+      const embed = new EmbedBuilder()
+        .setTitle('Blacklist Logs')
+        .setColor(0xE74C3C)
+        .setFooter({ text: `Total: ${blacklist.blacklisted.length}` })
+        .setTimestamp();
+
+      for (const b of blacklist.blacklisted.slice(0, 10)) {
+        const when = b.time ? new Date(b.time).toLocaleString() : 'n/a';
+        const moderator = b.moderator ? `<@${b.moderator}>` : 'n/a';
+        const reason = b.reason || 'No reason provided';
+        embed.addFields({
+          name: `User: ${b.id}`,
+          value: `Mod: ${moderator}\nWhen: ${when}\nReason: ${reason}`.substring(0, 1024)
+        });
+      }
+
+      if (blacklist.blacklisted.length > 10) {
+        embed.setDescription(`Showing first 10 of ${blacklist.blacklisted.length} entries.`);
+      }
+
+      return message.channel.send({ embeds: [embed] });
+    }
   }
 
   // Log blacklist action to configured channel
@@ -662,6 +870,54 @@ client.on('messageCreate', async (message) => {
       } catch (e) {}
       return message.channel.send({ embeds: [createChannelConfirmEmbed(`Updated duration for case ${caseId} to ${humanDuration(ms)}`, caseId)] });
     }
+
+    if (cmd.toLowerCase() === 'moderations') {
+      const userId = rest[0];
+      if (!userId) return message.reply('Usage: *moderations <userId>');
+      const userCases = modlogs.cases.filter(c => String(c.user) === String(userId));
+      if (userCases.length === 0) return message.reply(`No moderations found for user ${userId}.`);
+      
+      const embed = new EmbedBuilder()
+        .setTitle(`📊 Moderations for ${userId}`)
+        .setColor(0x8A2BE2)
+        .setDescription(`Total: **${userCases.length}** moderation(s)`)
+        .addFields(
+          userCases.map(c => ({
+            name: `Case #${c.caseId} — ${c.type}`,
+            value: `**Reason:** ${c.reason}\n**Moderator:** <@${c.moderator}>\n**Date:** <t:${Math.floor(c.time / 1000)}:f>`,
+            inline: false
+          }))
+        )
+        .setTimestamp();
+      
+      return message.channel.send({ embeds: [embed] });
+    }
+
+    if (cmd.toLowerCase() === 'case') {
+      const caseId = parseInt(rest[0], 10);
+      if (!caseId) return message.reply('Usage: *case <caseId>');
+      const c = modlogs.cases.find(x => Number(x.caseId) === Number(caseId));
+      if (!c) return message.reply(`Case ${caseId} not found.`);
+      
+      const embed = new EmbedBuilder()
+        .setTitle(`📋 Case #${c.caseId}`)
+        .setColor(0x8A2BE2)
+        .addFields(
+          { name: 'Type', value: c.type, inline: true },
+          { name: 'User', value: `<@${c.user}> (${c.user})`, inline: true },
+          { name: 'Moderator', value: `<@${c.moderator}>`, inline: true },
+          { name: 'Reason', value: c.reason, inline: false },
+          { name: 'Date', value: `<t:${Math.floor(c.time / 1000)}:f>`, inline: true }
+        );
+      
+      if (c.durationMs) {
+        embed.addFields({ name: 'Duration', value: humanDuration(c.durationMs), inline: true });
+      }
+      
+      embed.setTimestamp();
+      
+      return message.channel.send({ embeds: [embed] });
+    }
   }
 
   if (!message.content.startsWith(PREFIX)) return;
@@ -689,24 +945,227 @@ client.on('messageCreate', async (message) => {
 
   // Help command: list available commands in the usual embed style
   if (command === 'help' || command === 'h') {
-    const helpEmbed = createChannelConfirmEmbed('Here is a list of commands I support:');
-    helpEmbed.setTitle('Help — Commands');
+    const helpEmbed = new EmbedBuilder()
+      .setTitle('📋 CYBRANCEE — Bot Commands')
+      .setColor(0x8A2BE2)
+      .setDescription('Here is a complete list of all available commands:')
+      .setTimestamp();
+
     helpEmbed.addFields(
-      { name: '!help', value: 'Show this help message', inline: true },
-      { name: '!ticket', value: 'Create a support ticket', inline: true },
-      { name: '!close', value: 'Close a ticket (staff only)', inline: true },
-      { name: '!warn <user|id> [reason]', value: 'Warn a user (DM + modlog)', inline: false },
-      { name: '!ban <user|id> [reason]', value: 'Ban a user', inline: true },
-      { name: '!unban <id>', value: 'Unban a user by ID', inline: true },
-      { name: '!mute <user|id> <minutes>', value: 'Timeout a user for minutes', inline: true },
-      { name: '!unmute <user|id>', value: 'Remove timeout from a user', inline: true },
-      { name: '!md | !modlogs <user>', value: 'Show modlogs for a user', inline: false },
-      { name: '-blacklist <id> [reason]', value: 'Add an ID to blacklist (dash command)', inline: false },
-      { name: '!role <user> <role>', value: 'Assign a role to a user', inline: true },
-      { name: '!del | !delete <channel>', value: 'Delete a channel (confirm required)', inline: true },
-      { name: '!santa, !gift, !snow, !joke, !advent, !music', value: 'Fun / utility commands (see README for details)', inline: false }
+      { name: '📋 General', value: '`!help` — Show this help message\n`!say <text>` — Bot repeats your message\n`!rules` — Show server rules', inline: false },
+      { name: '🎫 Tickets', value: '`!ticket` — Create a support ticket\n`!close` — Close a ticket (staff only)', inline: false },
+      { name: '⚖️ Moderation', value: '`!warn <user> [reason]` — Warn a user\n`!ban <user> [reason]` — Ban a user\n`!unban <id>` — Unban a user\n`!mute <user> <minutes>` — Timeout a user\n`!unmute <user>` — Remove timeout\n`!role <user> <role>` — Assign role to user', inline: false },
+      { name: '📊 Logs & History', value: '`!md <user> [page]` — Show modlogs (8/page)\n`!mds <user> [page]` — Show destaff logs (8/page)', inline: false },
+      { name: '🗑️ Cleanup & Management', value: '`-purg <count> [user]` — Purge messages\n`!del <channel>` — Delete a channel (confirmation required)', inline: false },
+      { name: '🚫 Blacklist', value: '`-blacklist <id> [reason]` — Add to blacklist\n`-unbll <id>` — Remove from blacklist\n`-bll` — View blacklist logs', inline: false },
+      { name: '👥 Destaff', value: '`-destaff <user> [reason]` — Remove staff roles\n`-destaffban <user> [reason]` — Remove staff roles + ban', inline: false },
+      { name: '✏️ Modlog Editing', value: '`*reason <caseId> <text>` — Update case reason\n`*duration <caseId> <time>` — Update case duration\n`*moderations <userId>` — Show all moderations for user\n`*case <caseId>` — Show details of a specific case', inline: false },
+      { name: '🎮 Fun Commands', value: '`!8ball` — Magic 8Ball\n`!flip` — Coin flip\n`!dice [1-100]` — Roll dice\n`!rate [@user]` — Rate someone\n`!joke` — Dev jokes\n`!compliment [@user]` — Give compliments', inline: false }
     );
+
+    helpEmbed.setFooter({ text: 'Use PREFIX ! for most commands, - for special commands, * for edits' });
+    
+    message.delete().catch(() => {});
     return message.channel.send({ embeds: [helpEmbed] });
+  }
+
+  // Rules command
+  if (command === 'rules') {
+    const rulesEmbed = new EmbedBuilder()
+      .setTitle('📜 SERVER-REGELN')
+      .setColor(0x8A2BE2)
+      .setDescription('Bitte beachte folgende Regeln für ein angenehmes Miteinander:')
+      .addFields(
+        { name: '1️⃣ Respekt', value: 'Behandle jeden mit Respekt – keine Beleidigungen, Provokationen oder Diskriminierung.\nKein Mobbing oder toxisches Verhalten.', inline: false },
+        { name: '2️⃣ Chat-Verhalten', value: 'Kein Spam, Flooding oder Capslock-Spam.\nKeine Werbung ohne Erlaubnis.\nKeine NSFW-, Rassismus-, Gewalt- oder sonstig unangebrachten Inhalte.', inline: false },
+        { name: '3️⃣ Namen & Profilbilder', value: 'Keine beleidigenden, sexuell anstößigen oder irreführenden Namen/Bilder.\nNachahmung von Teammitgliedern ist verboten.', inline: false },
+        { name: '4️⃣ Voice-Chats', value: 'Kein Schreien, Stören oder Soundboard-Spam.\nMusikbots nur in den vorgesehenen Channels.', inline: false },
+        { name: '5️⃣ Team & Entscheidungen', value: 'Folge den Anweisungen des Teams.\nDiskussionen über Verwarnungen oder Bans bitte privat mit einem Moderator führen.', inline: false }
+      )
+      .setFooter({ text: 'Vielen Dank für dein Verständnis! 🙏' })
+      .setTimestamp();
+
+    message.delete().catch(() => {});
+    return message.channel.send({ embeds: [rulesEmbed] });
+  }
+
+  // 8ball command
+  if (command === '8ball') {
+    const responses = [
+      '✅ Ja, definitiv!', '❌ Nein, unmöglich.', '🤔 Vielleicht...', '✨ Die Chancen sind gut!',
+      '💫 Sieht schlecht aus.', '🎯 Sehr wahrscheinlich!', '🚫 Frag lieber nicht.', '🌟 Absolut!',
+      '❓ Das ist unklar.', '💯 100% Ja!', '😅 Eher nicht.', '🎪 Niemals!', '⚡ Warte und sieh!',
+      '👀 Konzentriere dich und frag erneut.', '🔮 Deutet darauf hin, ja.'
+    ];
+    const response = responses[Math.floor(Math.random() * responses.length)];
+    const embed = new EmbedBuilder()
+      .setTitle('🔮 Magic 8Ball')
+      .setDescription(response)
+      .setColor(0xFF6B6B)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Coin flip command
+  if (command === 'flip') {
+    const result = Math.random() < 0.5 ? '🪙 Kopf!' : '🪙 Zahl!';
+    const embed = new EmbedBuilder()
+      .setTitle('Münzwurf')
+      .setDescription(result)
+      .setColor(0xFFD700)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Dice roll command
+  if (command === 'dice' || command === 'roll') {
+    const dice = parseInt(args[0]) || 6;
+    if (dice < 1 || dice > 100) return message.reply('Würfel-Bereich: 1-100');
+    const result = Math.floor(Math.random() * dice) + 1;
+    const embed = new EmbedBuilder()
+      .setTitle(`🎲 Würfel (1-${dice})`)
+      .setDescription(`**Ergebnis: ${result}**`)
+      .setColor(0x4ECDC4)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Rate command
+  if (command === 'rate') {
+    const target = message.mentions.members.first() || message.author;
+    const rating = Math.floor(Math.random() * 101);
+    const emoji = rating >= 80 ? '🌟' : rating >= 60 ? '👍' : rating >= 40 ? '😐' : '💔';
+    const embed = new EmbedBuilder()
+      .setTitle('⭐ Rating-System')
+      .setDescription(`${target} bekommt eine Bewertung von **${rating}/100** ${emoji}`)
+      .setColor(0xFF69B4)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Joke command
+  if (command === 'joke') {
+    const jokes = [
+      'Warum sind Programmier so schlecht im Geschlechtsverkehr?\nWeil sie nur in 0 und 1 denken können!',
+      'Ein SQL-Query geht in eine Bar, trifft zwei Tabellen und fragt: "Darf ich mich zu euch setzen?"',
+      'Wie viele Programmierer braucht man zum Glühbirnenwechsel? Keine, das ist ein Hardware-Problem!',
+      'Ein Byte geht zum Psychotherapeuten: "Ich fühle mich in Bits zerlegt!"',
+      'Warum verlässt Perl seinen Partner? Weil da immer mehrere Wege zum Ziel führen!',
+      'Ein Developer liest einer Frau im Schlaf etwas vor... Sie sagt: "Das ist ja langweilig!" Er: "Ist es, aber der Code ist elegant!"',
+      'Wie heißt der Schüler des Lehrers? Stack Overflow!'
+    ];
+    const joke = jokes[Math.floor(Math.random() * jokes.length)];
+    const embed = new EmbedBuilder()
+      .setTitle('😂 Dev-Witz')
+      .setDescription(joke)
+      .setColor(0xFFB700)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Compliment command
+  if (command === 'compliment') {
+    const compliments = [
+      'Du bist wirklich inspirierend!', 'Dein Lächeln ist ansteckend!', 'Du bist ein großartiger Freund!',
+      'Du machst die Welt besser!', 'Deine Kreativität ist beeindruckend!', 'Du hast ein goldenes Herz!',
+      'Du bist eine echte Inspiration!', 'Deine Intelligenz beeindruckt mich!', 'Du schaffst Großartiges!',
+      'Deine Freundlichkeit ist bewunderungswürdig!', 'Du bist einfach wunderbar!', 'Die Welt braucht mehr Menschen wie dich!'
+    ];
+    const compliment = compliments[Math.floor(Math.random() * compliments.length)];
+    const target = message.mentions.members.first() || message.author;
+    const embed = new EmbedBuilder()
+      .setTitle('💝 Kompliment')
+      .setDescription(`${target}, ${compliment}`)
+      .setColor(0xFF1493)
+      .setTimestamp();
+    return message.reply({ embeds: [embed] });
+  }
+
+  // Modlogs pagination command: !md <user|id> [page]
+  if (command === 'md' || command === 'modlogs') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+      return message.reply('You lack permission to view modlogs.');
+    }
+    const userArg = args[0];
+    const pageArg = parseInt(args[1], 10) || 1;
+    if (!userArg) return message.reply('Usage: !md <user|id> [page]');
+
+    const targetId = parseId(userArg) || userArg.replace(/[<@!>]/g, '');
+    if (!targetId || !/^\d+$/.test(targetId)) return message.reply('Provide a valid user ID or mention.');
+
+    const itemsPerPage = 8;
+    const allCases = modlogs.cases
+      .filter(c => String(c.user) === String(targetId))
+      .sort((a, b) => (b.time || 0) - (a.time || 0));
+
+    if (!allCases.length) return message.reply('Keine Modlogs für diesen User gefunden.');
+
+    const totalPages = Math.max(1, Math.ceil(allCases.length / itemsPerPage));
+    const page = Math.max(1, Math.min(totalPages, pageArg));
+    const slice = allCases.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Modlogs — ${targetId}`)
+      .setColor(0x8A2BE2)
+      .setFooter({ text: `Page ${page}/${totalPages} • Total: ${allCases.length}` })
+      .setTimestamp();
+
+    for (const c of slice) {
+      const when = c.time ? new Date(c.time).toLocaleString() : 'n/a';
+      const moderator = c.moderator ? `<@${c.moderator}> (${c.moderator})` : 'n/a';
+      const reason = c.reason || 'No reason provided';
+      const duration = c.durationMs ? humanDuration(c.durationMs) : '—';
+      embed.addFields({
+        name: `Case #${c.caseId} — ${c.type || 'Unknown'}`,
+        value: `User: <@${c.user}>\nMod: ${moderator}\nWhen: ${when}\nDuration: ${duration}\nReason: ${reason}`.substring(0, 1024)
+      });
+    }
+
+    return message.channel.send({ embeds: [embed] });
+  }
+
+  // Destaff logs pagination command: !mds <user|id> [page]
+  if (command === 'mds') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) {
+      return message.reply('You lack permission to view destaff logs.');
+    }
+    const userArg = args[0];
+    const pageArg = parseInt(args[1], 10) || 1;
+    if (!userArg) return message.reply('Usage: !mds <user|id> [page]');
+
+    const targetId = parseId(userArg) || userArg.replace(/[<@!>]/g, '');
+    if (!targetId || !/^\d+$/.test(targetId)) return message.reply('Provide a valid user ID or mention.');
+
+    const itemsPerPage = 8;
+    const allCases = destaffs.cases
+      .filter(c => String(c.user) === String(targetId))
+      .sort((a, b) => (b.time || 0) - (a.time || 0));
+
+    if (!allCases.length) return message.reply('Keine Destaff-Logs für diesen User gefunden.');
+
+    const totalPages = Math.max(1, Math.ceil(allCases.length / itemsPerPage));
+    const page = Math.max(1, Math.min(totalPages, pageArg));
+    const slice = allCases.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Destaff Logs — ${targetId}`)
+      .setColor(0x8A2BE2)
+      .setFooter({ text: `Page ${page}/${totalPages} • Total: ${allCases.length}` })
+      .setTimestamp();
+
+    for (const c of slice) {
+      const when = c.time ? new Date(c.time).toLocaleString() : 'n/a';
+      const moderator = c.moderator ? `<@${c.moderator}> (${c.moderator})` : 'n/a';
+      const reason = c.reason || 'No reason provided';
+      const removed = c.removedRoles && c.removedRoles.length ? c.removedRoles.join(', ').substring(0, 200) : 'None';
+      const failed = c.failedRoles && c.failedRoles.length ? c.failedRoles.join(', ').substring(0, 200) : 'None';
+      embed.addFields({
+        name: `Case #${c.caseId} — ${c.type || 'Unknown'}`,
+        value: `User: <@${c.user}>\nMod: ${moderator}\nWhen: ${when}\nRemoved: ${removed}\nFailed: ${failed}\nReason: ${reason}`.substring(0, 1024)
+      });
+    }
+
+    return message.channel.send({ embeds: [embed] });
   }
 
   // Say command: bot repeats provided message (no mention pings)
@@ -714,6 +1173,7 @@ client.on('messageCreate', async (message) => {
     const text = args.join(' ').trim();
     if (!text) return message.reply('Usage: !say <message>');
     try {
+      message.delete().catch(() => {});
       await message.channel.send({ content: text, allowedMentions: { parse: [] } });
     } catch (e) {
       console.error('say command failed', e);

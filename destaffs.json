@@ -1,0 +1,56 @@
+{
+  "lastCase": 10004,
+  "cases": [
+    {
+      "caseId": 10001,
+      "type": "Destaff",
+      "user": "1094237565630033991",
+      "moderator": "1191442500976640172",
+      "reason": "inactiv",
+      "removedRoles": [
+        "Member",
+        "Staff",
+        "Administrator",
+        "Taucher"
+      ],
+      "failedRoles": [],
+      "time": 1767910606723
+    },
+    {
+      "caseId": 10002,
+      "type": "Destaff",
+      "user": "1094237565630033991",
+      "moderator": "1191442500976640172",
+      "reason": "inactiv",
+      "removedRoles": [
+        "Member"
+      ],
+      "failedRoles": [],
+      "time": 1767910631820
+    },
+    {
+      "caseId": 10003,
+      "type": "Destaff",
+      "user": "1094237565630033991",
+      "moderator": "1191442500976640172",
+      "reason": "inactiv",
+      "removedRoles": [],
+      "failedRoles": [],
+      "time": 1767910635165
+    },
+    {
+      "caseId": 10004,
+      "type": "Destaff",
+      "user": "1119298046652600484",
+      "moderator": "1191442500976640172",
+      "reason": "No reason provided",
+      "removedRoles": [
+        "Member",
+        "Taucher",
+        "7B"
+      ],
+      "failedRoles": [],
+      "time": 1767910958550
+    }
+  ]
+}

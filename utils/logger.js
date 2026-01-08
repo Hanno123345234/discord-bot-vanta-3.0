@@ -19,33 +19,44 @@ async function sendLog(guild, payload) {
     if (!guild) return;
     const cfg = loadConfig();
 
-    // Determine destination channel by category: moderation logs go to modLogChannelId
     const category = payload && (payload.category || payload.type) ? String(payload.category || payload.type).toLowerCase() : null;
     let ch = null;
 
-    if (category === 'moderation' || category === 'mod') {
-      // Try global channel by ID first (across all guilds)
-      if (cfg.modLogChannelId && guild && guild.client) ch = guild.client.channels.cache.get(String(cfg.modLogChannelId));
-      // If not cached, try to fetch
-      if (!ch && cfg.modLogChannelId && guild && guild.client) {
-        try { ch = await guild.client.channels.fetch(String(cfg.modLogChannelId)).catch(()=>null); } catch(e) { ch = null; }
+    const getById = async (id) => {
+      if (!id) return null;
+      const sid = String(id);
+      let target = guild.client ? guild.client.channels.cache.get(sid) : null;
+      if (!target && guild.client) {
+        try { target = await guild.client.channels.fetch(sid).catch(() => null); } catch (e) { target = null; }
       }
-      // Fallback to a channel in this guild
-      if (!ch && guild) ch = guild.channels.cache.get(String(cfg.modLogChannelId)) || guild.channels.cache.find(c => ['mod-logs','moderation-logs','moderation','modlogs'].includes(c.name));
+      if (!target) target = guild.channels.cache.get(sid) || null;
+      return target;
+    };
+
+    const fallbackByName = (names) => guild.channels.cache.find(c => names.includes(c.name));
+
+    if (category === 'rejected') {
+      ch = await getById(cfg.rejectedLogChannelId);
+      if (!ch) ch = fallbackByName(['rejected-logs','reject-logs','rejections']);
     }
 
-    // Fallback to general log channel (global first)
+    if (!ch && (category === 'audit' || category === 'audit-log')) {
+      ch = await getById(cfg.auditLogChannelId);
+      if (!ch) ch = fallbackByName(['audit-logs','auditlog','audit']);
+    }
+
+    if (!ch && (category === 'moderation' || category === 'mod')) {
+      ch = await getById(cfg.modLogChannelId);
+      if (!ch) ch = fallbackByName(['mod-logs','moderation-logs','moderation','modlogs']);
+    }
+
     if (!ch) {
-      if (cfg.logChannelId && guild && guild.client) ch = guild.client.channels.cache.get(String(cfg.logChannelId));
-      if (!ch && cfg.logChannelId && guild && guild.client) {
-        try { ch = await guild.client.channels.fetch(String(cfg.logChannelId)).catch(()=>null); } catch(e) { ch = null; }
-      }
-      if (!ch && guild) ch = guild.channels.cache.get(String(cfg.logChannelId)) || guild.channels.cache.find(c => ['discord-logs','logs','audit-logs'].includes(c.name));
+      ch = await getById(cfg.logChannelId);
+      if (!ch) ch = fallbackByName(['discord-logs','logs','audit-logs']);
     }
 
     if (!ch || !isTextLike(ch)) return;
 
-    // If payload is already a proper send object, send it; otherwise wrap embeds
     if (payload && typeof payload === 'object' && (payload.embeds || payload.content || payload.files)) return await ch.send(payload).catch(()=>{});
     if (payload) return await ch.send({ embeds: [payload] }).catch(()=>{});
     return;

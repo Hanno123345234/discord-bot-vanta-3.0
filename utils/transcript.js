@@ -13,7 +13,6 @@ async function fetchMessagesText(channel) {
     lastId = messages.last().id;
     if (messages.size < 100) break;
   }
-  // sort to chronological
   return fetched.sort((a,b)=>a.createdTimestamp - b.createdTimestamp);
 }
 
@@ -40,15 +39,20 @@ function toHTML(messages) {
 }
 
 async function createTranscript(channel, folderPath) {
-  const messages = await fetchMessagesText(channel);
-  const txt = toPlainText(messages);
-  const html = toHTML(messages);
-  const safeName = `${channel.guild.id}-${channel.id}-${Date.now()}`;
-  const txtPath = path.join(folderPath, safeName + '.txt');
-  const htmlPath = path.join(folderPath, safeName + '.html');
-  fs.writeFileSync(txtPath, txt, 'utf8');
-  fs.writeFileSync(htmlPath, html, 'utf8');
-  return { txtPath, htmlPath };
+  try {
+    const messages = await fetchMessagesText(channel);
+    const txt = toPlainText(messages);
+    const html = toHTML(messages);
+    const safeName = `${channel.guild.id}-${channel.id}-${Date.now()}`;
+    const txtPath = path.join(folderPath, safeName + '.txt');
+    const htmlPath = path.join(folderPath, safeName + '.html');
+    fs.writeFileSync(txtPath, txt, 'utf8');
+    fs.writeFileSync(htmlPath, html, 'utf8');
+    return { txtPath, htmlPath };
+  } catch (err) {
+    console.error('Transcript creation failed:', err);
+    throw err;
+  }
 }
 
 module.exports = { createTranscript };

@@ -1,5 +1,5 @@
 {
-  "lastCase": 10061,
+  "lastCase": 10064,
   "cases": [
     {
       "caseId": 10001,
@@ -494,6 +494,30 @@
       "moderator": "1191442500976640172",
       "reason": "No reason provided",
       "time": 1767729587167
+    },
+    {
+      "caseId": 10062,
+      "type": "Ban",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "No reason provided",
+      "time": 1767909979192
+    },
+    {
+      "caseId": 10063,
+      "type": "Ban",
+      "user": "1191442500976640172",
+      "moderator": "1191442500976640172",
+      "reason": "No reason provided",
+      "time": 1767910032293
+    },
+    {
+      "caseId": 10064,
+      "type": "Unban",
+      "user": "1084218518687453316",
+      "moderator": "1191442500976640172",
+      "reason": "Unban",
+      "time": 1767911780662
     }
   ]
 }
