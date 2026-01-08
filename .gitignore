@@ -6,8 +6,7 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 
-# dotenv / Secrets
-.env
+# dotenv / Secrets (EXCEPT .env which we need for the bot)
 .env.local
 .env.*.local
 
