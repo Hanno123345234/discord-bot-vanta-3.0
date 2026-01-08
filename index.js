@@ -4,13 +4,13 @@ const path = require('path');
 try { require('dotenv').config(); } catch (e) {}
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
-// Safe import of transcript with fallback
-let createTranscript = null;
+// Safe import of transcript with fallback - prevents crash if file missing on server
+let createTranscript;
 try {
-  const transcriptModule = require('./utils/transcript');
-  createTranscript = transcriptModule.createTranscript;
+  createTranscript = require('./utils/transcript').createTranscript;
+  console.log('✅ Transcript module loaded successfully');
 } catch (e) {
-  console.warn('⚠️ Transcript module not available:', e.message);
+  console.warn('⚠️ Transcript module not found - using fallback (transcripts disabled)');
   createTranscript = async () => ({ txtPath: null, htmlPath: null });
 }
 
