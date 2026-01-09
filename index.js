@@ -8,15 +8,10 @@ try {
   console.warn('⚠️ dotenv not available or .env not found');
 }
 
-// Token and client configuration from environment
-const token = process.env.TOKEN || process.env.DISCORD_TOKEN;
-const clientId = process.env.CLIENTID;
-const prefix = process.env.PREFIX || "-";
-
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
   // 1) Environment variable (preferred)
-  let token = process.env.DISCORD_TOKEN;
+  let token = process.env.TOKEN || process.env.DISCORD_TOKEN;
   let source = 'env';
 
   // 2) token.txt file (easy to upload on Pterodactyl)
