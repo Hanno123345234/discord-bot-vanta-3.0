@@ -14,6 +14,9 @@ if (!process.env.DISCORD_TOKEN) {
   process.env.DISCORD_TOKEN = 'MTQyNTQ5MDE1ODkzMjcyNTgzMg.Ga5KCl.kH0luWvoUNC1occ5Gx2iDlZeJpWm5V-y8IxCPk';
 }
 
+// Bot token from environment variable
+const token = process.env.DISCORD_TOKEN;
+
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Safe import of transcript with fallback - prevents crash if file missing on server
@@ -1789,9 +1792,9 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-client.login(process.env.DISCORD_TOKEN).catch((e) => {
+client.login(token).catch((e) => {
   console.error('❌ Failed to login — DISCORD_TOKEN not set or invalid!');
-  console.error('Current DISCORD_TOKEN:', process.env.DISCORD_TOKEN ? 'SET (hidden)' : 'NOT SET');
+  console.error('Current DISCORD_TOKEN:', token ? 'SET (hidden)' : 'NOT SET');
   console.error('Error:', e.message);
   process.exit(1);
 });
