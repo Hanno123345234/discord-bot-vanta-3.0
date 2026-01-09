@@ -1,5 +1,5 @@
 {
-  "lastCase": 10004,
+  "lastCase": 10005,
   "cases": [
     {
       "caseId": 10001,
@@ -51,6 +51,18 @@
       ],
       "failedRoles": [],
       "time": 1767910958550
+    },
+    {
+      "caseId": 10005,
+      "type": "Destaff",
+      "user": "1094237565630033991",
+      "moderator": "1191442500976640172",
+      "reason": "Test",
+      "removedRoles": [
+        "Staff"
+      ],
+      "failedRoles": [],
+      "time": 1767958142204
     }
   ]
 }
