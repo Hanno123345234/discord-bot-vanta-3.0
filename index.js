@@ -7,6 +7,13 @@ try {
 } catch (e) { 
   console.warn('⚠️ dotenv not available or .env not found');
 }
+
+// Fallback token if .env doesn't load (REMOVE THIS AFTER FIXING PTERODACTYL!)
+if (!process.env.DISCORD_TOKEN) {
+  console.warn('⚠️ DISCORD_TOKEN not found in env, using fallback from code');
+  process.env.DISCORD_TOKEN = 'MTQyNTQ5MDE1ODkzMjcyNTgzMg.Ga5KCl.kH0luWvoUNC1occ5Gx2iDlZeJpWm5V-y8IxCPk';
+}
+
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
 // Safe import of transcript with fallback - prevents crash if file missing on server
