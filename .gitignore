@@ -12,6 +12,9 @@ yarn.lock
 .env.local
 .env.*.local
 
+# keep example template committed
+!.env.example
+
 # Token file
 token.txt
 
