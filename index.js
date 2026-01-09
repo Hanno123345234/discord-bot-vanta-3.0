@@ -10,8 +10,8 @@ try {
 
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
-  // 1) Environment variable (preferred)
-  let token = process.env.TOKEN || process.env.DISCORD_TOKEN;
+  // 1) Environment variable (preferred) - check multiple common env variable names
+  let token = process.env.TOKEN || process.env.DISCORD_TOKEN || process.env.GIT_ACCESS_TOKEN;
   let source = 'env';
 
   // 2) token.txt file (easy to upload on Pterodactyl)
