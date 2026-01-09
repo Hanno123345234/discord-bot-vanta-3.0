@@ -7,7 +7,10 @@
     "start": "node index.js"
   },
   "dependencies": {
+    "@discordjs/builders": "^1.10.0",
+    "@discordjs/rest": "^2.6.0",
     "discord.js": "^14.11.0",
+    "discord-api-types": "^0.37.120",
     "dotenv": "^16.0.0"
   },
   "author": "CYBRANCEE Team",
