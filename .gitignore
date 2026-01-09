@@ -6,9 +6,14 @@ yarn-error.log*
 package-lock.json
 yarn.lock
 
-# dotenv / Secrets (EXCEPT .env which we need for the bot)
+# dotenv / Secrets
+.env
+.env.*
 .env.local
 .env.*.local
+
+# Token file
+token.txt
 
 # Python
 __pycache__/

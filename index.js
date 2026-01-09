@@ -11,8 +11,22 @@ try {
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
   // 1) Environment variable (preferred) - check multiple common env variable names
-  let token = process.env.TOKEN || process.env.DISCORD_TOKEN || process.env.GIT_ACCESS_TOKEN;
-  let source = 'env';
+  // Note: Some Pterodactyl eggs expose only a "GIT ACCESS TOKEN" field.
+  const envCandidates = [
+    { key: 'TOKEN', val: process.env.TOKEN },
+    { key: 'DISCORD_TOKEN', val: process.env.DISCORD_TOKEN },
+    { key: 'GIT_ACCESS_TOKEN', val: process.env.GIT_ACCESS_TOKEN },
+  ];
+
+  let token;
+  let source;
+  for (const c of envCandidates) {
+    if (c.val) {
+      token = c.val;
+      source = `env:${c.key}`;
+      break;
+    }
+  }
 
   // 2) token.txt file (easy to upload on Pterodactyl)
   try {
@@ -40,7 +54,13 @@ function resolveToken() {
   } catch (e) {}
 
   // Normalize
-  if (typeof token === 'string') token = token.trim();
+  if (typeof token === 'string') {
+    token = token.trim();
+    // strip surrounding quotes
+    token = token.replace(/^['"]|['"]$/g, '');
+    // some people paste "Bot <token>" or "Bearer <token>"
+    token = token.replace(/^(bot|bearer)\s+/i, '').trim();
+  }
   return { token, source };
 }
 
