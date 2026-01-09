@@ -8,6 +8,11 @@ try {
   console.warn('⚠️ dotenv not available or .env not found');
 }
 
+// Token and client configuration from environment
+const token = process.env.TOKEN || process.env.DISCORD_TOKEN;
+const clientId = process.env.CLIENTID;
+const prefix = process.env.PREFIX || "-";
+
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
   // 1) Environment variable (preferred)
@@ -53,7 +58,7 @@ function validateTokenFormat(t) {
   return t.length >= 50;
 }
 
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ActivityType } = require('discord.js');
 
 // Safe import of transcript with fallback - prevents crash if file missing on server
 let createTranscript;
@@ -304,8 +309,19 @@ function formatFooterTime(ts) {
 
 client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
+  console.log(Date());
   console.log(`🔥 CYBRANCEE Bot is online!`);
-  client.user.setActivity('CYBRANCEE | !help', { type: 3 });
+  
+  // Set the bot's presence to Do Not Disturb with custom status
+  client.user.setPresence({
+    status: 'dnd',
+    activities: [
+      {
+        name: 'Sad😔',
+        type: ActivityType.Custom,
+      },
+    ],
+  });
 });
 
 // Moderation / audit style event logs: member joins/leaves, voice join/leave, message deletions
