@@ -1,9 +1,14 @@
 const fs = require('fs');
 const path = require('path');
 // Load .env into process.env when present (safe if dotenv isn't installed)
+const DOTENV_PATH = path.join(__dirname, '.env');
+let DOTENV_PRESENT = false;
+let DOTENV_LOADED = false;
+try { DOTENV_PRESENT = fs.existsSync(DOTENV_PATH); } catch (e) { DOTENV_PRESENT = false; }
 try { 
   require('dotenv').config({ path: path.join(__dirname, '.env') }); 
   console.log('✅ .env file loaded');
+  DOTENV_LOADED = true;
 } catch (e) { 
   console.warn('⚠️ dotenv not available or .env not found');
 }
@@ -89,6 +94,7 @@ const DATA_DIR = __dirname;
 const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
 const BLACKLIST_PATH = path.join(DATA_DIR, 'blacklist.json');
 const DESTAFFS_PATH = path.join(DATA_DIR, 'destaffs.json');
+const DESTAFF_LOG_CHANNEL_ID = process.env.DESTAFF_LOG_CHANNEL_ID || '1459166993381851247';
 
 function loadJson(p, fallback) {
   try {
@@ -517,6 +523,119 @@ try {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
+  // Prefix command: -dm / <PREFIX>dm  -> DMs a user with a purple embed
+  // Usage: -dm @user <message>
+  try {
+    const raw = (message.content || '').trim();
+    const lowered = raw.toLowerCase();
+    const dmPrefixA = `${PREFIX}dm`;
+    const dmPrefixB = `-dm`;
+    const isDmCmd = lowered === dmPrefixA || lowered.startsWith(dmPrefixA + ' ') || lowered === dmPrefixB || lowered.startsWith(dmPrefixB + ' ');
+
+    if (isDmCmd) {
+      if (!message.guild) return message.reply('Dieses Kommando kann nur auf einem Server verwendet werden.');
+
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+      const isStaff = member
+        ? (cfg.staffRoleId && member.roles.cache.has(String(cfg.staffRoleId).replace(/[<@&>]/g, '')))
+          || member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        : false;
+
+      if (!isStaff) return message.reply('Du hast keine Berechtigung, dieses Kommando zu nutzen.');
+
+      const parts = raw.split(/\s+/);
+      const targetArg = parts[1];
+      const dmText = parts.slice(2).join(' ').trim();
+      const targetId = parseId(targetArg) || (targetArg && /^\d+$/.test(targetArg) ? targetArg : null);
+
+      if (!targetId || !dmText) {
+        return message.reply(`Usage: ${PREFIX}dm @user <message>  oder  -dm @user <message>`);
+      }
+
+      const targetUser = await client.users.fetch(targetId).catch(() => null);
+      if (!targetUser) return message.reply('User nicht gefunden.');
+
+      const embed = new EmbedBuilder()
+        .setColor(0x8A2BE2)
+        .setTitle('Nachricht')
+        .setDescription(dmText.substring(0, 4000))
+        .setTimestamp()
+        .setFooter({ text: `Von ${message.guild.name}` });
+
+      try {
+        await targetUser.send({ embeds: [embed] });
+      } catch (e) {
+        return message.reply('Konnte keine DM senden (DMs deaktiviert oder User blockiert).');
+      }
+
+      appendActionMd(message.guild, message.author.tag, 'DM Sent', `Sent DM to ${targetUser.tag} (${targetUser.id}): ${dmText}`);
+      try {
+        await sendLog(message.guild, {
+          embeds: [
+            new EmbedBuilder()
+              .setColor(0x8A2BE2)
+              .setTitle('DM gesendet')
+              .setDescription(`An: <@${targetUser.id}>\nVon: ${message.author.tag}\n\n${dmText.substring(0, 3500)}`)
+              .setTimestamp()
+              .setFooter(buildFooter(message.guild))
+          ],
+          category: 'moderation'
+        }).catch(() => {});
+      } catch (e) {}
+
+      return message.reply(`DM gesendet an ${targetUser.tag}.`);
+    }
+  } catch (e) {
+    console.error('dm command failed', e);
+  }
+
+  // Prefix command: -env / <PREFIX>env -> shows environment/token diagnostics (staff only)
+  try {
+    const rawEnv = (message.content || '').trim();
+    const loweredEnv = rawEnv.toLowerCase();
+    const envCmdA = `${PREFIX}env`;
+    const envCmdB = `-env`;
+    const isEnvCmd = loweredEnv === envCmdA || loweredEnv === envCmdB;
+    if (isEnvCmd) {
+      if (!message.guild) return message.reply('This command can only be used in a server.');
+
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+      const isStaff = member
+        ? (cfg.staffRoleId && member.roles.cache.has(String(cfg.staffRoleId).replace(/[<@&>]/g, '')))
+          || member.permissions.has(PermissionsBitField.Flags.ManageGuild)
+        : false;
+      if (!isStaff) return message.reply('No permission.');
+
+      const { token: t, source: src } = resolveToken();
+      const len = t ? t.length : 0;
+      const masked = t ? `${String(t).slice(0, 4)}…${String(t).slice(-4)}` : '(none)';
+
+      const embed = new EmbedBuilder()
+        .setColor(0x8A2BE2)
+        .setTitle('Environment Check')
+        .addFields(
+          { name: '.env present', value: String(DOTENV_PRESENT), inline: true },
+          { name: 'dotenv loaded', value: String(DOTENV_LOADED), inline: true },
+          { name: 'token source', value: src || 'none', inline: false },
+          { name: 'token length', value: String(len), inline: true },
+          { name: 'token preview', value: masked, inline: true },
+          {
+            name: 'env vars present',
+            value: `TOKEN=${!!process.env.TOKEN}  DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN}  GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`,
+            inline: false,
+          }
+        )
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
+      return message.reply({ embeds: [embed] });
+    }
+  } catch (e) {
+    console.error('env command failed', e);
+  }
+
   // Prefix command ticket system: !ticket (creates ticket category+channel), !close (mods only)
   try {
     if (message.content && message.content.trim().toLowerCase() === `${PREFIX}ticket`) {
@@ -764,10 +883,10 @@ client.on('messageCreate', async (message) => {
     }
 
     if (cmd.toLowerCase() === 'destaff' || cmd.toLowerCase() === 'destaffban') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return message.reply('You lack permission to destaff users.');
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return message.reply('Du hast keine Berechtigung, Nutzer zu destaffen.');
       const id = parseId(rest[0]) || rest[0];
-      const reason = rest.slice(1).join(' ') || 'No reason provided';
-      if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID or mention.');
+      const reason = rest.slice(1).join(' ') || 'Kein Grund angegeben';
+      if (!id || !/^\d+$/.test(id)) return message.reply('Bitte gib eine gültige User-ID oder Mention an.');
 
       const shouldBan = cmd.toLowerCase() === 'destaffban';
       let member = null;
@@ -818,30 +937,38 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      const success = removedRoles.length > 0 || (shouldBan && banResult === 'success');
-      const color = success ? 0x2ECC71 : 0xE74C3C;
-      const title = shouldBan ? 'Destaffban' : 'Destaff';
+      const title = shouldBan ? 'Destaff (Ban)' : 'Destaff';
+      const compactRemoved = removedRoles.length ? removedRoles.join(', ').substring(0, 256) : '—';
+      const compactFailed = failedRoles.length ? failedRoles.join(', ').substring(0, 256) : '—';
 
       const embed = new EmbedBuilder()
-        .setColor(color)
+        .setColor(0x8A2BE2)
         .setTitle(title)
+        .setDescription(`**User:** <@${id}>\n**Case:** #${caseId}`)
         .addFields(
-          { name: 'User', value: `<@${id}> (${id})`, inline: true },
-          { name: 'Case ID', value: `#${caseId}`, inline: true },
-          { name: 'Moderator', value: `${message.author.tag}`, inline: true },
-          { name: 'Removed Roles', value: removedRoles.length ? removedRoles.join(', ').substring(0, 1024) : 'None', inline: false },
-          { name: 'Failed Roles', value: failedRoles.length ? failedRoles.join(', ').substring(0, 1024) : 'None', inline: false },
-          { name: 'Reason', value: reason, inline: false }
+          { name: 'Moderator', value: `<@${message.author.id}>`, inline: true },
+          { name: 'Reason', value: reason.substring(0, 256), inline: true },
+          { name: 'Roles removed', value: `${removedRoles.length}`, inline: true },
+          { name: 'Roles failed', value: `${failedRoles.length}`, inline: true },
+          { name: 'Removed (preview)', value: compactRemoved, inline: false },
+          { name: 'Failed (preview)', value: compactFailed, inline: false }
         )
         .setTimestamp()
         .setFooter(buildFooter(message.guild));
 
       if (shouldBan) {
-        embed.addFields({ name: 'Ban Status', value: banResult === 'success' ? '✅ Banned' : '❌ Ban failed', inline: true });
+        embed.addFields({ name: 'Ban', value: banResult === 'success' ? '✅ success' : '❌ failed', inline: true });
       }
 
-      await message.channel.send({ embeds: [embed] });
-      await sendLog(message.guild, { embeds: [embed], category: 'mod' }).catch(() => {});
+      // Send to dedicated destaff log channel
+      try {
+        const ch = message.guild.channels.cache.get(DESTAFF_LOG_CHANNEL_ID) || await message.guild.channels.fetch(DESTAFF_LOG_CHANNEL_ID).catch(() => null);
+        if (ch && isTextLike(ch)) await ch.send({ embeds: [embed] }).catch(() => {});
+      } catch (e) {
+        console.error('destaff log channel send failed', e);
+      }
+
+      await message.reply({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`✅ Destaff gespeichert. Case: #${caseId}`)] }).catch(() => {});
       return;
     }
 
@@ -1869,6 +1996,8 @@ const tokenMasked = token
 console.log(`🔑 Token source: ${source || 'none'}`);
 console.log(`🔎 Token length: ${tokenLen}`);
 console.log(`🕵️ Token preview: ${tokenMasked}`);
+console.log(`📄 .env present: ${DOTENV_PRESENT} (loaded: ${DOTENV_LOADED})`);
+console.log(`🔧 Env vars present: TOKEN=${!!process.env.TOKEN} DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN} GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`);
 
 if (!validateTokenFormat(token)) {
   console.error('❌ Bot token missing or malformed.');
