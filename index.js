@@ -1861,21 +1861,27 @@ client.on('messageCreate', async (message) => {
 
 // Resolve and validate token before login
 const { token, source } = resolveToken();
+const tokenLen = token ? token.length : 0;
+const tokenMasked = token
+  ? `${String(token).slice(0, 4)}…${String(token).slice(-4)}`
+  : '(none)';
+
 console.log(`🔑 Token source: ${source || 'none'}`);
-console.log(`🔎 Token length: ${token ? token.length : 0}`);
+console.log(`🔎 Token length: ${tokenLen}`);
+console.log(`🕵️ Token preview: ${tokenMasked}`);
 
 if (!validateTokenFormat(token)) {
   console.error('❌ Bot token missing or malformed.');
   console.error('Fix options:');
-  console.error('1) Set DISCORD_TOKEN in Startup/Environment on Pterodactyl');
-  console.error('2) Upload token.txt with the token content into the root folder');
+  console.error('1) Set TOKEN or DISCORD_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on Pterodactyl');
+  console.error('2) Upload token.txt (ONLY the token) into the root folder');
   console.error('3) Add { "discordToken": "..." } in config.json (temporary)');
   process.exit(1);
 }
 
 client.login(token).catch((e) => {
   console.error('❌ Failed to login — token invalid.');
-  console.error('Tip: Regenerate the bot token in Discord Developer Portal and update env/token.txt.');
+  console.error('Tip: Regenerate the bot token in Discord Developer Portal and update your Startup variable or token.txt.');
   console.error('Error:', e.message);
   process.exit(1);
 });
