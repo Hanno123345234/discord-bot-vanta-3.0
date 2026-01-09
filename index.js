@@ -8,14 +8,50 @@ try {
   console.warn('⚠️ dotenv not available or .env not found');
 }
 
-// Fallback token if .env doesn't load (REMOVE THIS AFTER FIXING PTERODACTYL!)
-if (!process.env.DISCORD_TOKEN) {
-  console.warn('⚠️ DISCORD_TOKEN not found in env, using fallback from code');
-  process.env.DISCORD_TOKEN = 'MTQyNTQ5MDE1ODkzMjcyNTgzMg.Ga5KCl.kH0luWvoUNC1occ5Gx2iDlZeJpWm5V-y8IxCPk';
+// Resolve bot token from multiple sources to avoid env issues on hosts
+function resolveToken() {
+  // 1) Environment variable (preferred)
+  let token = process.env.DISCORD_TOKEN;
+  let source = 'env';
+
+  // 2) token.txt file (easy to upload on Pterodactyl)
+  try {
+    if (!token) {
+      const tokenFile = path.join(__dirname, 'token.txt');
+      if (fs.existsSync(tokenFile)) {
+        token = fs.readFileSync(tokenFile, 'utf8');
+        source = 'token.txt';
+      }
+    }
+  } catch (e) {}
+
+  // 3) config.json field (discouraged, but works)
+  try {
+    if (!token) {
+      const cfgPath = path.join(__dirname, 'config.json');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+        if (cfg && typeof cfg.discordToken === 'string' && cfg.discordToken.trim()) {
+          token = cfg.discordToken;
+          source = 'config.json';
+        }
+      }
+    }
+  } catch (e) {}
+
+  // Normalize
+  if (typeof token === 'string') token = token.trim();
+  return { token, source };
 }
 
-// Bot token from environment variable
-const token = process.env.DISCORD_TOKEN;
+function validateTokenFormat(t) {
+  if (!t || typeof t !== 'string') return false;
+  const parts = t.split('.');
+  // Discord tokens are usually 3 parts separated by dots
+  if (parts.length !== 3) return false;
+  // Basic length check to catch empty/short values
+  return t.length >= 50;
+}
 
 const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 
@@ -1792,9 +1828,23 @@ client.on('messageCreate', async (message) => {
     }
 });
 
+// Resolve and validate token before login
+const { token, source } = resolveToken();
+console.log(`🔑 Token source: ${source || 'none'}`);
+console.log(`🔎 Token length: ${token ? token.length : 0}`);
+
+if (!validateTokenFormat(token)) {
+  console.error('❌ Bot token missing or malformed.');
+  console.error('Fix options:');
+  console.error('1) Set DISCORD_TOKEN in Startup/Environment on Pterodactyl');
+  console.error('2) Upload token.txt with the token content into the root folder');
+  console.error('3) Add { "discordToken": "..." } in config.json (temporary)');
+  process.exit(1);
+}
+
 client.login(token).catch((e) => {
-  console.error('❌ Failed to login — DISCORD_TOKEN not set or invalid!');
-  console.error('Current DISCORD_TOKEN:', token ? 'SET (hidden)' : 'NOT SET');
+  console.error('❌ Failed to login — token invalid.');
+  console.error('Tip: Regenerate the bot token in Discord Developer Portal and update env/token.txt.');
   console.error('Error:', e.message);
   process.exit(1);
 });
