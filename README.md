@@ -12,7 +12,7 @@ npm install
 ### 2. Configure Environment
 Set a bot token via **one** of these options:
 - Environment variable: `DISCORD_TOKEN` (preferred)
-- Alternative env vars (for hosting panels): `TOKEN`, `DISCORD_BOT_TOKEN`, `BOT_TOKEN`, or `GIT_ACCESS_TOKEN`
+- Alternative env vars (for hosting panels): `TOKEN`, `TOKENSP`, `DISCORD_BOT_TOKEN`, `BOT_TOKEN`, or `GIT_ACCESS_TOKEN`
 - Upload `token.txt` into the project root (file must contain **only** the token)
 
 Optional: Set `PREFIX` (default: `!`)
@@ -25,6 +25,12 @@ Edit `config.json` with your Discord channel IDs:
 - `auditLogChannelId` — Audit logs
 - `rejectedLogChannelId` — Rejected actions
 - `welcomeChannelId` — Welcome/leave messages
+- `joinLogChannelId` — Join logs
+- `leaveLogChannelId` — Leave logs
+
+Optional:
+- `memberRoleId` — Auto role for new members
+- `guilds.<guildId>.<key>` — Per-server overrides (e.g. different log channels per server)
 
 ## ▶️ Run
 ```bash
@@ -69,7 +75,7 @@ npm start
 
 ### Destaff
 - `-destaff <user> [reason]` — Remove staff roles
-- `-destaffban <user> [reason]` — Remove staff roles + ban
+- `-destaffban` is treated the same as `-destaff` (no ban)
 
 ### Modlog Editing
 - `*reason <caseId> <text>` — Update case reason

@@ -36,6 +36,10 @@ module.exports = {
         const cmd = require(path.join(__dirname, '..', 'commands', 'ticket.js'));
         return cmd.execute(interaction, config);
       }
+      if (interaction.commandName === 'admin') {
+        const cmd = require(path.join(__dirname, '..', 'commands', 'admin.js'));
+        return cmd.execute(interaction, config);
+      }
       return;
     }
 

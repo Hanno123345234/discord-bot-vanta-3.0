@@ -10,6 +10,17 @@ function loadConfig() {
   return {};
 }
 
+function mergeGuildConfig(cfg, guildId) {
+  try {
+    if (!cfg || !guildId) return cfg || {};
+    const gid = String(guildId);
+    const overrides = cfg.guilds && cfg.guilds[gid] && typeof cfg.guilds[gid] === 'object' ? cfg.guilds[gid] : null;
+    return overrides ? Object.assign({}, cfg, overrides) : cfg;
+  } catch (e) {
+    return cfg || {};
+  }
+}
+
 function isTextLike(ch) {
   return ch && (typeof ch.isTextBased === 'function' ? ch.isTextBased() : (ch.isText && ch.isText()));
 }
@@ -17,7 +28,7 @@ function isTextLike(ch) {
 async function sendLog(guild, payload) {
   try {
     if (!guild) return;
-    const cfg = loadConfig();
+    const cfg = mergeGuildConfig(loadConfig(), guild.id);
 
     const category = payload && (payload.category || payload.type) ? String(payload.category || payload.type).toLowerCase() : null;
     let ch = null;

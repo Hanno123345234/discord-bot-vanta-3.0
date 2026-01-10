@@ -4,7 +4,9 @@
   "description": "Professional Discord moderation bot for CYBRANCEE server",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "install-service": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\install_vantabot_nssm.ps1",
+    "uninstall-service": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\uninstall_vantabot_nssm.ps1"
   },
   "dependencies": {
     "@discordjs/builders": "^1.10.0",

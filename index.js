@@ -16,6 +16,22 @@ try {
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
 
+  const sanitizeTokenString = (raw) => {
+    if (typeof raw !== 'string') return undefined;
+    let v = raw.trim();
+    if (!v) return undefined;
+    v = v.replace(/^['"]|['"]$/g, '');
+    v = v.replace(/^(bot|bearer)\s+/i, '').trim();
+    return v || undefined;
+  };
+
+  const looksLikeDiscordToken = (raw) => {
+    const v = sanitizeTokenString(raw);
+    if (!v) return false;
+    const parts = v.split('.');
+    return parts.length === 3 && v.length >= 50;
+  };
+
   const envCandidates = [
     { key: 'TOKENSP', val: process.env.TOKENSP },
     { key: 'TOKEN', val: process.env.TOKEN },
@@ -27,12 +43,16 @@ function resolveToken() {
 
   let token;
   let source;
+  const ignored = [];
   for (const c of envCandidates) {
-    if (c.val) {
-      token = c.val;
+    const v = sanitizeTokenString(c.val);
+    if (!v) continue;
+    if (looksLikeDiscordToken(v)) {
+      token = v;
       source = `env:${c.key}`;
       break;
     }
+    ignored.push(`${c.key}(len=${v.length}, parts=${v.split('.').length})`);
   }
 
   // 2) raw .env file fallback (some panels/users paste ONLY the token into .env)
@@ -47,8 +67,8 @@ function resolveToken() {
 
         // If the first meaningful line is a raw token (no '='), accept it.
         const first = lines[0];
-        if (first && !first.includes('=')) {
-          token = first;
+        if (first && !first.includes('=') && looksLikeDiscordToken(first)) {
+          token = sanitizeTokenString(first);
           source = '.env:raw';
         }
       }
@@ -60,7 +80,8 @@ function resolveToken() {
     if (!token) {
       const tokenFile = path.join(__dirname, 'token.txt');
       if (fs.existsSync(tokenFile)) {
-        token = fs.readFileSync(tokenFile, 'utf8');
+        const raw = fs.readFileSync(tokenFile, 'utf8');
+        if (looksLikeDiscordToken(raw)) token = sanitizeTokenString(raw);
         source = 'token.txt';
       }
     }
@@ -73,22 +94,16 @@ function resolveToken() {
       if (fs.existsSync(cfgPath)) {
         const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
         if (cfg && typeof cfg.discordToken === 'string' && cfg.discordToken.trim()) {
-          token = cfg.discordToken;
-          source = 'config.json';
+          if (looksLikeDiscordToken(cfg.discordToken)) {
+            token = sanitizeTokenString(cfg.discordToken);
+            source = 'config.json';
+          }
         }
       }
     }
   } catch (e) {}
 
-  // Normalize
-  if (typeof token === 'string') {
-    token = token.trim();
-    // strip surrounding quotes
-    token = token.replace(/^['"]|['"]$/g, '');
-    // some people paste "Bot <token>" or "Bearer <token>"
-    token = token.replace(/^(bot|bearer)\s+/i, '').trim();
-  }
-  return { token, source };
+  return { token, source, ignored };
 }
 
 function validateTokenFormat(t) {
@@ -132,6 +147,13 @@ function loadJson(p, fallback) {
 }
 function saveJson(p, obj) {
   fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8');
+}
+
+function loadGuildConfig(guildId) {
+  const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+  const gid = guildId ? String(guildId) : null;
+  const overrides = gid && cfg && cfg.guilds && cfg.guilds[gid] && typeof cfg.guilds[gid] === 'object' ? cfg.guilds[gid] : null;
+  return overrides ? Object.assign({}, cfg, overrides) : cfg;
 }
 
 function appendActionMd(guild, moderatorTag, title, details) {
@@ -341,10 +363,24 @@ client.on('interactionCreate', async (interaction) => {
           return interaction.editReply(first ? `Du hast bereits ein offenes Ticket: ${first}` : 'Du hast bereits ein offenes Ticket.');
         }
 
-        let staffRoleId = cfg.staffRoleId ? String(cfg.staffRoleId).replace(/[<@&>]/g, '') : null;
+        // Resolve staff role id from config: accept raw id, mention, or role name
+        let staffRoleId = cfg.staffRoleId ? String(cfg.staffRoleId).trim() : null;
+        if (staffRoleId) staffRoleId = staffRoleId.replace(/[<@&>]/g, '');
+        if (staffRoleId && !/^\d+$/.test(staffRoleId)) {
+          const byExactName = interaction.guild.roles.cache.find(r => r && r.name === String(cfg.staffRoleId).trim());
+          staffRoleId = byExactName ? byExactName.id : null;
+        }
+        let staffRole = null;
+        if (staffRoleId && /^\d+$/.test(staffRoleId)) {
+          staffRole = interaction.guild.roles.cache.get(staffRoleId) || await interaction.guild.roles.fetch(staffRoleId).catch(() => null);
+          if (!staffRole) staffRoleId = null;
+        }
         if (!staffRoleId) {
           const byName = interaction.guild.roles.cache.find(r => isStaffLikeRoleName(r && r.name));
-          if (byName) staffRoleId = byName.id;
+          if (byName) {
+            staffRoleId = byName.id;
+            staffRole = byName;
+          }
         }
         const everyone = interaction.guild.roles.everyone;
 
@@ -359,21 +395,21 @@ client.on('interactionCreate', async (interaction) => {
         }
         if (!category) {
           const catOverwrites = [
-            { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+            { id: everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
           ];
-          if (staffRoleId) {
-            catOverwrites.push({ id: staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel] });
+          if (staffRole) {
+            catOverwrites.push({ id: staffRole, allow: [PermissionsBitField.Flags.ViewChannel] });
           }
           category = await interaction.guild.channels.create({ name: 'tickets', type: 4, permissionOverwrites: catOverwrites });
         }
 
         const overwrites = [
-          { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
-          { id: targetUserId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+          { id: everyone, deny: [PermissionsBitField.Flags.ViewChannel] },
+          { id: interaction.user, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
         ];
-        if (staffRoleId) {
+        if (staffRole) {
           overwrites.push({
-            id: staffRoleId,
+            id: staffRole,
             allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageMessages]
           });
         }
@@ -602,10 +638,14 @@ function buildFooter(guild) {
 client.on('guildMemberAdd', async (member) => {
   try {
     // Auto-assign member role
-    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const cfg = loadGuildConfig(member.guild.id);
     const joinTs = Math.floor(Date.now() / 1000);
     try {
-      const memberRole = member.guild.roles.cache.find(r => r.name.toLowerCase() === 'member') || member.guild.roles.cache.find(r => r.name.toLowerCase() === 'members');
+      const memberRoleId = process.env.MEMBER_ROLE_ID || cfg.memberRoleId;
+      const rid = memberRoleId ? String(memberRoleId).replace(/[<@&>]/g, '') : null;
+      const memberRole = rid
+        ? (member.guild.roles.cache.get(rid) || await member.guild.roles.fetch(rid).catch(() => null))
+        : (member.guild.roles.cache.find(r => String(r.name || '').toLowerCase() === 'member') || member.guild.roles.cache.find(r => String(r.name || '').toLowerCase() === 'members'));
       if (memberRole && !member.roles.cache.has(memberRole.id)) {
         await member.roles.add(memberRole, 'Auto-assigned on join').catch(() => {});
       }
@@ -736,7 +776,7 @@ client.on('guildMemberRemove', async (member) => {
     } catch (e) {}
 
     // Send leave message to welcome channel
-    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const cfg = loadGuildConfig(member.guild.id);
     if (cfg.welcomeChannelId) {
       const welcomeCh = member.guild.channels.cache.get(cfg.welcomeChannelId) || await member.guild.channels.fetch(cfg.welcomeChannelId).catch(() => null);
       if (welcomeCh && isTextLike(welcomeCh)) {
@@ -1307,33 +1347,69 @@ client.on('messageCreate', async (message) => {
       const reason = rest.slice(1).join(' ') || 'No reason provided';
       if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID to blacklist.');
 
-      if (blacklist.blacklisted.includes(id)) return message.reply('This ID is already blacklisted.');
-      blacklist.blacklisted.push({ id, reason, moderator: message.author.id, time: Date.now() });
-      saveJson(BLACKLIST_PATH, blacklist);
+      const existingEntry = blacklist.blacklisted.find(b => b && typeof b === 'object' && String(b.id) === String(id));
 
-      // Try to ban in this guild
-      let success = 0;
-      let failed = 0;
-      try {
-        await message.guild.members.ban(id, { reason: `Blacklisted: ${reason}` });
-        success += 1;
-      } catch (e) {
-        failed += 1;
+      // Ban targets (explicit list as requested)
+      const targetGuildIds = [
+        '1459330497938325676',
+        '1459345285317791917',
+        '1368527215343435826',
+        '1339662600903983154',
+      ];
+
+      const banAttempts = [];
+      for (const gid of targetGuildIds) {
+        const g = client.guilds.cache.get(gid) || await client.guilds.fetch(gid).catch(() => null);
+        if (!g) {
+          banAttempts.push({ guildId: gid, guildName: null, ok: false, error: 'Bot not in guild / cannot fetch guild' });
+          continue;
+        }
+        try {
+          await g.members.ban(id, { reason: `Blacklisted: ${reason} (by ${message.author.tag})` });
+          banAttempts.push({ guildId: g.id, guildName: g.name, ok: true });
+        } catch (e) {
+          banAttempts.push({ guildId: g.id, guildName: g.name, ok: false, error: String(e.message || e) });
+        }
       }
+
+      const success = banAttempts.filter(a => a.ok).length;
+      const failed = banAttempts.filter(a => !a.ok).length;
+
+      if (existingEntry) {
+        existingEntry.reason = reason;
+        existingEntry.moderator = message.author.id;
+        existingEntry.time = Date.now();
+        existingEntry.banAttempts = banAttempts;
+      } else {
+        blacklist.blacklisted.push({ id, reason, moderator: message.author.id, time: Date.now(), banAttempts });
+      }
+      saveJson(BLACKLIST_PATH, blacklist);
 
       const embed = new EmbedBuilder()
         .setColor(0x8A2BE2)
         .setTitle('Blacklist')
         .addFields(
-          { name: 'User', value: id, inline: true },
-          { name: 'Reason', value: reason, inline: true },
-          { name: 'Banned by', value: message.author.tag, inline: true }
+          { name: 'User', value: `<@${id}> (${id})`, inline: true },
+          { name: 'Reason', value: reason.substring(0, 256), inline: true },
+          { name: 'Moderator', value: `<@${message.author.id}>`, inline: true }
         )
         .addFields(
           { name: 'Success', value: `${success} servers`, inline: true },
           { name: 'Failed', value: `${failed} servers`, inline: true }
         )
-        .setTimestamp();
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
+      if (existingEntry) {
+        embed.setDescription('Already blacklisted — re-running bans in target servers.');
+      }
+
+      if (banAttempts.length) {
+        const lines = banAttempts
+          .map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})${a.ok ? '' : ` — ${String(a.error || 'failed').substring(0, 60)}`}`)
+          .join('\n');
+        embed.addFields({ name: 'Ban results', value: lines.substring(0, 1024), inline: false });
+      }
 
       return message.channel.send({ embeds: [embed] });
     }
@@ -1344,8 +1420,8 @@ client.on('messageCreate', async (message) => {
       const reason = rest.slice(1).join(' ') || 'Kein Grund angegeben';
       if (!id || !/^\d+$/.test(id)) return message.reply('Bitte gib eine gültige User-ID oder Mention an.');
 
-      // As requested: always ban (destaff + ban)
-      const shouldBan = true;
+      // Requested now: ONLY remove staff roles, do NOT ban.
+      const shouldBan = false;
       let member = null;
       try {
         member = await message.guild.members.fetch(id).catch(() => null);
@@ -1388,73 +1464,12 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      let banResult = null;
-      let banGuildUsed = null;
-      const banTargets = [];
-      const banAttempts = [];
-      if (shouldBan) {
-        try {
-          // Ban in configured guild (can be the same as current guild)
-          let banGuild = null;
-          // 1) By guild ID (preferred)
-          if (DESTAFF_BAN_GUILD_ID && /^\d+$/.test(String(DESTAFF_BAN_GUILD_ID))) {
-            banGuild = client.guilds.cache.get(DESTAFF_BAN_GUILD_ID) || await client.guilds.fetch(DESTAFF_BAN_GUILD_ID).catch(() => null);
-          }
-          // 2) Fallback by guild name (case-insensitive)
-          if (!banGuild && DESTAFF_BAN_GUILD_NAME) {
-            const want = String(DESTAFF_BAN_GUILD_NAME).toLowerCase();
-            banGuild = client.guilds.cache.find(g => String(g.name || '').toLowerCase() === want) || null;
-          }
-
-          // Always ban in the current guild as well
-          const currentGuild = message.guild;
-
-          if (banGuild) banTargets.push(banGuild);
-          if (currentGuild) banTargets.push(currentGuild);
-
-          // Dedupe guild targets
-          const uniqueTargets = new Map();
-          for (const g of banTargets) {
-            if (g && g.id) uniqueTargets.set(g.id, g);
-          }
-          const targets = Array.from(uniqueTargets.values());
-          if (!targets.length) {
-            banResult = 'failed';
-            errors.push(`Ban guild not found (ID: ${DESTAFF_BAN_GUILD_ID || '—'}, Name: ${DESTAFF_BAN_GUILD_NAME || '—'})`);
-          } else {
-            banGuildUsed = banGuild;
-
-            // optional DM (best-effort) - send once
-            try {
-              const user = await client.users.fetch(id).catch(() => null);
-              if (user) {
-                await sendModEmbedToUser(user, 'Ban', { guild: targets[0], moderatorTag: message.author.tag, reason, caseId: null }).catch(() => {});
-              }
-            } catch (e) {}
-
-            for (const g of targets) {
-              try {
-                await g.members.ban(id, { reason: `Destaffban by ${message.author.tag}: ${reason}` });
-                banAttempts.push({ guildId: g.id, guildName: g.name, ok: true });
-              } catch (e) {
-                banAttempts.push({ guildId: g.id, guildName: g.name, ok: false, error: String(e.message || e) });
-                errors.push(`Ban failed in ${g.name} (${g.id}): ${String(e.message || e)}`);
-              }
-            }
-
-            const allOk = banAttempts.length > 0 && banAttempts.every(a => a.ok);
-            banResult = allOk ? 'success' : 'failed';
-          }
-        } catch (e) {
-          banResult = 'failed';
-          errors.push(`Ban failed: ${String(e.message || e)}`);
-        }
-      }
+      // Intentionally no ban logic here.
 
       // Store in destaff logs file (no case id in output)
       try {
         destaffs.cases.push({
-          type: 'DestaffBan',
+          type: 'Destaff',
           user: id,
           moderator: message.author.id,
           reason,
@@ -1462,10 +1477,6 @@ client.on('messageCreate', async (message) => {
           failedRoles,
           roleDurations: removedRoleDurations,
           errors,
-          banGuildId: banGuildUsed ? banGuildUsed.id : (DESTAFF_BAN_GUILD_ID || null),
-          banGuildName: banGuildUsed ? banGuildUsed.name : (DESTAFF_BAN_GUILD_NAME || null),
-          banResult,
-          banAttempts,
           time: Date.now(),
         });
         saveJson(DESTAFFS_PATH, destaffs);
@@ -1473,13 +1484,13 @@ client.on('messageCreate', async (message) => {
         errors.push(`Failed writing destaffs.json: ${String(e.message || e)}`);
       }
 
-      const title = 'Destaff (Ban)';
+      const title = 'Destaff';
       const compactRemoved = removedRoles.length ? removedRoles.join(', ').substring(0, 256) : '—';
       const compactFailed = failedRoles.length ? failedRoles.join(', ').substring(0, 256) : '—';
       const durationPreview = removedRoleDurations.length ? removedRoleDurations.join(' | ').substring(0, 1024) : '—';
 
-      // Success means: bans succeeded (even if there were no staff roles to remove)
-      const ok = shouldBan ? (banResult === 'success') : (failedRoles.length === 0 && errors.length === 0);
+      // Success means: role removals succeeded (or there were no staff roles), with no errors.
+      const ok = (failedRoles.length === 0 && errors.length === 0);
       const replyColor = ok ? 0x2ECC71 : 0xE74C3C;
 
       const embed = new EmbedBuilder()
@@ -1498,20 +1509,6 @@ client.on('messageCreate', async (message) => {
         .setTimestamp()
         .setFooter(buildFooter(message.guild));
 
-      if (shouldBan) {
-        const hubTxt = banGuildUsed ? `${banGuildUsed.name} (${banGuildUsed.id})` : (DESTAFF_BAN_GUILD_ID || DESTAFF_BAN_GUILD_NAME || '—');
-        const currentTxt = message.guild ? `${message.guild.name} (${message.guild.id})` : '—';
-        embed.addFields(
-          { name: 'Ban targets', value: `Hub: ${hubTxt}\nCurrent: ${currentTxt}`.substring(0, 1024), inline: false },
-          { name: 'Ban', value: banResult === 'success' ? '✅ success' : '❌ failed', inline: true }
-        );
-
-        if (banAttempts.length) {
-          const lines = banAttempts.map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})`).join('\n');
-          embed.addFields({ name: 'Ban results', value: lines.substring(0, 1024), inline: false });
-        }
-      }
-
       if (errors.length) {
         embed.addFields({ name: 'Errors', value: errors.join('\n').substring(0, 1024), inline: false });
       }
@@ -1527,7 +1524,7 @@ client.on('messageCreate', async (message) => {
       // Reply to executor: green if success, else show issues
       const replyEmbed = new EmbedBuilder()
         .setColor(replyColor)
-        .setDescription(ok ? '✅ Destaff + Ban erfolgreich.' : '❌ Destaff + Ban fehlgeschlagen.');
+        .setDescription(ok ? '✅ Destaff erfolgreich.' : '❌ Destaff fehlgeschlagen.');
 
       const issueLines = [];
       if (failedRoles.length) issueLines.push(`Failed roles: ${failedRoles.join(', ')}`);
@@ -1545,21 +1542,70 @@ client.on('messageCreate', async (message) => {
       const id = parseId(rest[0]) || rest[0];
       if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID.');
 
+      if (!blacklist || typeof blacklist !== 'object') blacklist = { blacklisted: [] };
+      if (!Array.isArray(blacklist.blacklisted)) blacklist.blacklisted = [];
+
       const idx = blacklist.blacklisted.findIndex(b => String(b.id) === String(id));
       if (idx === -1) return message.reply('This ID is not in the blacklist.');
 
       blacklist.blacklisted.splice(idx, 1);
       saveJson(BLACKLIST_PATH, blacklist);
 
+      // Unban across the same explicit target guild list as -blacklist
+      const targetGuildIds = [
+        '1459330497938325676',
+        '1459345285317791917',
+        '1368527215343435826',
+        '1339662600903983154',
+      ];
+
+      const unbanAttempts = [];
+      for (const gid of targetGuildIds) {
+        const g = client.guilds.cache.get(gid) || await client.guilds.fetch(gid).catch(() => null);
+        if (!g) {
+          unbanAttempts.push({ guildId: gid, guildName: null, ok: false, note: null, error: 'Bot not in guild / cannot fetch guild' });
+          continue;
+        }
+        try {
+          await g.bans.remove(id, `Unblacklisted by ${message.author.tag}`);
+          unbanAttempts.push({ guildId: g.id, guildName: g.name, ok: true, note: null });
+        } catch (e) {
+          const msg = String(e && (e.message || e) || 'failed');
+          // If the user isn't banned there, treat as a non-error outcome.
+          if ((e && e.code === 10026) || /unknown\s+ban/i.test(msg)) {
+            unbanAttempts.push({ guildId: g.id, guildName: g.name, ok: true, note: 'Not banned' });
+          } else {
+            unbanAttempts.push({ guildId: g.id, guildName: g.name, ok: false, note: null, error: msg });
+          }
+        }
+      }
+
+      const success = unbanAttempts.filter(a => a.ok).length;
+      const failed = unbanAttempts.filter(a => !a.ok).length;
+
       const embed = new EmbedBuilder()
         .setColor(0x2ECC71)
         .setTitle('Unblacklist')
         .addFields(
           { name: 'User', value: id, inline: true },
-          { name: 'Removed by', value: message.author.tag, inline: true }
+          { name: 'Removed by', value: message.author.tag, inline: true },
+          { name: 'Unban success', value: `${success} servers`, inline: true },
+          { name: 'Unban failed', value: `${failed} servers`, inline: true }
         )
         .setTimestamp()
         .setFooter(buildFooter(message.guild));
+
+      if (unbanAttempts.length) {
+        const lines = unbanAttempts
+          .map(a => {
+            const base = `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})`;
+            if (a.ok && a.note) return `${base} — ${a.note}`;
+            if (!a.ok) return `${base} — ${String(a.error || 'failed').substring(0, 80)}`;
+            return base;
+          })
+          .join('\n');
+        embed.addFields({ name: 'Unban results', value: lines.substring(0, 1024), inline: false });
+      }
 
       return message.channel.send({ embeds: [embed] });
     }
@@ -1569,19 +1615,45 @@ client.on('messageCreate', async (message) => {
 
       if (!blacklist.blacklisted.length) return message.reply('Blacklist is empty.');
 
+      const arg = rest[0] ? (parseId(rest[0]) || rest[0]) : null;
+      if (arg && /^\d+$/.test(String(arg))) {
+        const entry = blacklist.blacklisted.find(b => String(b.id) === String(arg));
+        if (!entry) return message.reply('This user is not in the blacklist.');
+
+        const embed = new EmbedBuilder()
+          .setTitle('Blacklist Entry')
+          .setColor(0x8A2BE2)
+          .addFields(
+            { name: 'User', value: `<@${entry.id}> (${entry.id})`, inline: true },
+            { name: 'Moderator', value: entry.moderator ? `<@${entry.moderator}>` : 'n/a', inline: true },
+            { name: 'When', value: entry.time ? `<t:${Math.floor(entry.time / 1000)}:F> (<t:${Math.floor(entry.time / 1000)}:R>)` : 'n/a', inline: false },
+            { name: 'Reason', value: String(entry.reason || 'No reason provided').substring(0, 1024), inline: false }
+          )
+          .setTimestamp()
+          .setFooter(buildFooter(message.guild));
+
+        if (Array.isArray(entry.banAttempts) && entry.banAttempts.length) {
+          const lines = entry.banAttempts
+            .map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})${a.ok ? '' : ` — ${String(a.error || 'failed').substring(0, 80)}`}`)
+            .join('\n');
+          embed.addFields({ name: 'Last ban results', value: lines.substring(0, 1024), inline: false });
+        }
+
+        return message.channel.send({ embeds: [embed] });
+      }
+
       const embed = new EmbedBuilder()
         .setTitle('Blacklist Logs')
-        .setColor(0xE74C3C)
+        .setColor(0x8A2BE2)
         .setFooter({ text: `Total: ${blacklist.blacklisted.length}` })
         .setTimestamp();
 
       for (const b of blacklist.blacklisted.slice(0, 10)) {
-        const when = b.time ? new Date(b.time).toLocaleString() : 'n/a';
         const moderator = b.moderator ? `<@${b.moderator}>` : 'n/a';
         const reason = b.reason || 'No reason provided';
         embed.addFields({
           name: `User: ${b.id}`,
-          value: `Mod: ${moderator}\nWhen: ${when}\nReason: ${reason}`.substring(0, 1024)
+          value: `Mod: ${moderator}\nWhen: ${b.time ? `<t:${Math.floor(b.time / 1000)}:R>` : 'n/a'}\nReason: ${String(reason).substring(0, 256)}`.substring(0, 1024)
         });
       }
 
@@ -1723,12 +1795,13 @@ client.on('messageCreate', async (message) => {
 
     helpEmbed.addFields(
       { name: '📋 General', value: '`!help` — Show this help message\n`!say <text>` — Bot repeats your message\n`!rules` — Show server rules', inline: false },
+      { name: '🔗 Invite', value: '`!invite` — Get bot invite link', inline: false },
       { name: '🎫 Tickets', value: '`!ticket` — Create a support ticket\n`!close` — Close a ticket (staff only)', inline: false },
       { name: '⚖️ Moderation', value: '`!warn <user> [reason]` — Warn a user\n`!ban <user> [reason]` — Ban a user\n`!unban <id>` — Unban a user\n`!mute <user> <minutes>` — Timeout a user\n`!unmute <user>` — Remove timeout\n`!role <user> <role>` — Assign role to user', inline: false },
       { name: '📊 Logs & History', value: '`!md <user> [page]` — Show modlogs (5/page)\n`!mds <user> [page]` — Show destaff logs (8/page)', inline: false },
       { name: '🗑️ Cleanup & Management', value: '`-purg <count> [user]` — Purge messages\n`!del <channel>` — Delete a channel (confirmation required)', inline: false },
       { name: '🚫 Blacklist', value: '`-blacklist <id> [reason]` — Add to blacklist\n`-unbll <id>` — Remove from blacklist\n`-bll` — View blacklist logs', inline: false },
-      { name: '👥 Destaff', value: '`-destaff <user> [reason]` — Remove staff roles\n`-destaffban <user> [reason]` — Remove staff roles + ban', inline: false },
+      { name: '👥 Destaff', value: '`-destaff <user> [reason]` — Remove staff roles', inline: false },
       { name: '✏️ Modlog Editing', value: '`*reason <caseId> <text>` — Update case reason\n`*duration <caseId> <time>` — Update case duration\n`*moderations <userId>` — Show all moderations for user\n`*case <caseId>` — Show details of a specific case', inline: false },
       { name: '🎮 Fun Commands', value: '`!8ball` — Magic 8Ball\n`!flip` — Coin flip\n`!dice [1-100]` — Roll dice\n`!rate [@user]` — Rate someone\n`!joke` — Dev jokes\n`!compliment [@user]` — Give compliments', inline: false }
     );
@@ -1737,6 +1810,45 @@ client.on('messageCreate', async (message) => {
     
     message.delete().catch(() => {});
     return message.channel.send({ embeds: [helpEmbed] });
+  }
+
+  // Invite command: provide OAuth2 bot invite link
+  if (command === 'invite') {
+    const clientId = client.user && client.user.id ? String(client.user.id) : null;
+    if (!clientId) return message.reply('Bot not ready yet. Try again in a few seconds.');
+
+    const scopes = 'bot%20applications.commands';
+    const recommendedPerms = new PermissionsBitField([
+      PermissionsBitField.Flags.ViewChannel,
+      PermissionsBitField.Flags.SendMessages,
+      PermissionsBitField.Flags.EmbedLinks,
+      PermissionsBitField.Flags.AttachFiles,
+      PermissionsBitField.Flags.ReadMessageHistory,
+      PermissionsBitField.Flags.ManageMessages,
+      PermissionsBitField.Flags.ManageChannels,
+      PermissionsBitField.Flags.ManageRoles,
+      PermissionsBitField.Flags.ModerateMembers,
+      PermissionsBitField.Flags.BanMembers,
+      PermissionsBitField.Flags.ViewAuditLog,
+    ]).bitfield.toString();
+
+    const adminPerms = '8';
+    const inviteRecommended = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=${recommendedPerms}&scope=${scopes}`;
+    const inviteAdmin = `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=${adminPerms}&scope=${scopes}`;
+
+    const embed = new EmbedBuilder()
+      .setTitle('🔗 Invite this bot')
+      .setColor(0x8A2BE2)
+      .setDescription('Use one of the links below to add the bot to a server. You need **Manage Server** permission in the target server.')
+      .addFields(
+        { name: 'Recommended permissions', value: inviteRecommended.substring(0, 1024), inline: false },
+        { name: 'Admin (not recommended)', value: inviteAdmin.substring(0, 1024), inline: false },
+        { name: 'Client ID', value: clientId, inline: true },
+        { name: 'Servers', value: `${client.guilds.cache.size}`, inline: true }
+      )
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [embed] });
   }
 
   // Rules command
@@ -2516,13 +2628,11 @@ client.on('messageCreate', async (message) => {
 // Resolve and validate token before login
 const { token: resolvedToken, source } = resolveToken();
 
-// Make sure TOKENSP exists for login (compat: if you set TOKEN=... in .env, it still works)
-if (!process.env.TOKENSP && resolvedToken) process.env.TOKENSP = resolvedToken;
+// Use a normal variable for login (instead of process.env.*)
+const token = resolvedToken;
 
-const tokenLen = process.env.TOKENSP ? process.env.TOKENSP.length : 0;
-const tokenMasked = process.env.TOKENSP
-  ? `${String(process.env.TOKENSP).slice(0, 4)}…${String(process.env.TOKENSP).slice(-4)}`
-  : '(none)';
+const tokenLen = token ? token.length : 0;
+const tokenMasked = token ? `${String(token).slice(0, 4)}…${String(token).slice(-4)}` : '(none)';
 
 console.log(`🔑 Token source: ${source || 'none'}`);
 console.log(`🔎 Token length: ${tokenLen}`);
@@ -2534,17 +2644,16 @@ console.log(
   `GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`
 );
 
-if (!validateTokenFormat(process.env.TOKENSP)) {
+if (!validateTokenFormat(token)) {
   console.error('❌ Bot token missing or malformed.');
   console.error('Fix options:');
-  console.error('1) Set TOKENSP (preferred) or TOKEN / DISCORD_TOKEN / DISCORD_BOT_TOKEN / BOT_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on your host');
+  console.error('1) Set TOKEN (or TOKENSP / DISCORD_TOKEN / DISCORD_BOT_TOKEN / BOT_TOKEN / GIT_ACCESS_TOKEN) in Startup/Environment on your host');
   console.error('2) Upload token.txt (ONLY the token) into the root folder');
   console.error('3) Add { "discordToken": "..." } in config.json (temporary)');
   process.exit(1);
 }
 
-// Exactly like your example:
-client.login(process.env.TOKENSP).catch((e) => {
+client.login(token).catch((e) => {
   console.error('❌ Failed to login — token invalid.');
   console.error('Tip: Regenerate the bot token in Discord Developer Portal and update your Startup variable or token.txt.');
   console.error('Error:', e.message);

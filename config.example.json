@@ -1,13 +1,27 @@
 {
   "ticketCategoryId": "REPLACE_WITH_CATEGORY_ID",
   "logChannelId": "REPLACE_WITH_LOG_CHANNEL_ID",
+  "modLogChannelId": "REPLACE_WITH_MOD_LOG_CHANNEL_ID",
   "moderationLogChannelId": "REPLACE_WITH_MODERATION_LOG_CHANNEL_ID",
+  "auditLogChannelId": "REPLACE_WITH_AUDIT_LOG_CHANNEL_ID",
+  "rejectedLogChannelId": "REPLACE_WITH_REJECTED_LOG_CHANNEL_ID",
   "welcomeChannelId": "REPLACE_WITH_WELCOME_CHANNEL_ID",
   "rulesChannelId": "REPLACE_WITH_RULES_CHANNEL_ID",
   "joinLogChannelId": "REPLACE_WITH_JOIN_LOG_CHANNEL_ID",
   "leaveLogChannelId": "REPLACE_WITH_LEAVE_LOG_CHANNEL_ID",
   "messageLogChannelId": "REPLACE_WITH_MESSAGE_LOG_CHANNEL_ID",
   "staffRoleId": "REPLACE_WITH_STAFF_ROLE_ID",
+  "memberRoleId": "REPLACE_WITH_MEMBER_ROLE_ID",
+  "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID",
+  "guilds": {
+    "REPLACE_WITH_GUILD_ID": {
+      "joinLogChannelId": "REPLACE_WITH_JOIN_LOG_CHANNEL_ID",
+      "leaveLogChannelId": "REPLACE_WITH_LEAVE_LOG_CHANNEL_ID",
+      "moderationLogChannelId": "REPLACE_WITH_MODERATION_LOG_CHANNEL_ID",
+      "memberRoleId": "REPLACE_WITH_MEMBER_ROLE_ID",
+      "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID"
+    }
+  },
   "transcriptFolder": "transcripts",
   "maxOpenPerUser": 1
 }

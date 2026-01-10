@@ -18,25 +18,67 @@ module.exports = {
       const tPath = path.join(DATA_DIR, tFolder);
       if (!fs.existsSync(tPath)) fs.mkdirSync(tPath, { recursive: true });
 
-      // Register ticket command. If TEST_GUILD_ID or config.testGuildId is set, register to that guild (fast); otherwise register globally (may take up to 1 hour).
+      // Register slash commands.
+      // - Guild registration appears instantly.
+      // - Global registration can take up to ~1 hour to show up.
       const ticketCmd = require(path.join(DATA_DIR, 'commands', 'ticket.js'));
+      const adminCmd = require(path.join(DATA_DIR, 'commands', 'admin.js'));
+      const slashCommands = [ticketCmd.data, adminCmd.data];
       const testGuildId = process.env.TEST_GUILD_ID || config.testGuildId || null;
+
+      async function upsertGuildSlashCommands(guild) {
+        if (!guild || !guild.commands) return;
+        const existing = await guild.commands.fetch().catch(() => null);
+        for (const cmd of slashCommands) {
+          try {
+            const found = existing ? existing.find(c => c && c.name === cmd.name) : null;
+            if (found) await guild.commands.edit(found.id, cmd);
+            else await guild.commands.create(cmd);
+          } catch (e) {
+            console.warn(`Failed to upsert guild command ${cmd && cmd.name ? cmd.name : 'unknown'} in ${guild.id}`, e);
+          }
+        }
+      }
+
+      const immediateGuildIds = new Set();
+      if (testGuildId) immediateGuildIds.add(String(testGuildId));
+      if (config && config.guilds && typeof config.guilds === 'object') {
+        for (const gid of Object.keys(config.guilds)) immediateGuildIds.add(String(gid));
+      }
+
+      // Also include the fixed target servers used for cross-server commands.
+      const targetGuildIds = [
+        '1459330497938325676',
+        '1459345285317791917',
+        '1368527215343435826',
+        '1339662600903983154',
+      ];
+      for (const gid of targetGuildIds) immediateGuildIds.add(String(gid));
+
+      // Also upsert to all currently cached guilds (so commands show up immediately everywhere).
+      if (client.guilds && client.guilds.cache) {
+        for (const [gid] of client.guilds.cache) immediateGuildIds.add(String(gid));
+      }
+
+      // Guild deploy for immediate visibility.
+      for (const gid of immediateGuildIds) {
+        try {
+          const guild = client.guilds.cache.get(gid) || await client.guilds.fetch(gid).catch(() => null);
+          if (!guild) continue;
+          await upsertGuildSlashCommands(guild);
+          console.log(`Slash commands upserted to guild ${guild.id}.`);
+        } catch (e) {
+          console.warn(`Failed to upsert slash commands to guild ${gid}`, e);
+        }
+      }
+
+      // Optional global deploy (slow to propagate).
       if (client.application) {
-        if (testGuildId) {
-          try {
-            const guild = await client.guilds.fetch(testGuildId);
-            await guild.commands.set([ticketCmd.data]);
-            console.log(`Ticket command registered to test guild ${testGuildId}.`);
-          } catch (e) {
-            console.warn('Failed to register ticket command to test guild', testGuildId, e);
-          }
-        } else {
-          try {
-            await client.application.commands.set([ticketCmd.data]);
-            console.log('Ticket command registered globally (may take some time to appear).');
-          } catch (e) {
-            console.warn('Failed to register ticket command via application.commands.set()', e);
-          }
+        try {
+          await client.application.commands.set(slashCommands);
+          console.log('Slash commands registered globally (may take some time to appear).');
+        } catch (e) {
+          console.warn('Failed to register slash commands via application.commands.set()', e);
         }
       }
 

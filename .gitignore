@@ -18,6 +18,9 @@ yarn.lock
 # Token file
 token.txt
 
+# Local server config (keep example template committed)
+config.json
+
 # Runtime bot data (keep out of GitHub)
 actions.md
 modlogs.json
