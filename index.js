@@ -316,9 +316,115 @@ function humanDurationLong(ms) {
 }
 
 client.on('interactionCreate', async (interaction) => {
-  // Handle ticket close button interactions
+  // Ticket system: create + close button interactions
   try {
-    if (interaction.isButton() && interaction.customId === 'ticket_close') {
+    // Create ticket from panel button
+    if (interaction.isButton() && typeof interaction.customId === 'string' && interaction.customId.startsWith('ticket_create_btn')) {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        if (!interaction.guild) return interaction.editReply('Dieses Feature funktioniert nur auf einem Server.');
+
+        // Backward compat: ticket_create_btn:<userId>
+        const parts = interaction.customId.split(':');
+        const forcedUserId = parts.length > 1 ? parts[1] : null;
+        if (forcedUserId && interaction.user.id !== forcedUserId) {
+          return interaction.editReply('Du kannst nur dein eigenes Ticket erstellen.');
+        }
+
+        const targetUserId = interaction.user.id;
+
+        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+        const maxOpen = Number(cfg.maxOpenPerUser) || 1;
+        const existing = interaction.guild.channels.cache.filter(c => c.topic && c.topic.startsWith(`ticket:${targetUserId}:`));
+        if (existing.size >= maxOpen) {
+          const first = existing.first();
+          return interaction.editReply(first ? `Du hast bereits ein offenes Ticket: ${first}` : 'Du hast bereits ein offenes Ticket.');
+        }
+
+        let staffRoleId = cfg.staffRoleId ? String(cfg.staffRoleId).replace(/[<@&>]/g, '') : null;
+        if (!staffRoleId) {
+          const byName = interaction.guild.roles.cache.find(r => isStaffLikeRoleName(r && r.name));
+          if (byName) staffRoleId = byName.id;
+        }
+        const everyone = interaction.guild.roles.everyone;
+
+        // Find or create a shared Tickets category
+        let category = null;
+        if (cfg.ticketCategoryId && String(cfg.ticketCategoryId).includes('REPLACE_WITH') === false) {
+          const cid = String(cfg.ticketCategoryId).replace(/[<#>]/g, '');
+          category = interaction.guild.channels.cache.get(cid) || await interaction.guild.channels.fetch(cid).catch(() => null);
+        }
+        if (!category) {
+          category = interaction.guild.channels.cache.find(c => c && c.type === 4 && ['tickets', 'ticket', 'support', 'support-tickets'].includes(String(c.name || '').toLowerCase())) || null;
+        }
+        if (!category) {
+          const catOverwrites = [
+            { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+          ];
+          if (staffRoleId) {
+            catOverwrites.push({ id: staffRoleId, allow: [PermissionsBitField.Flags.ViewChannel] });
+          }
+          category = await interaction.guild.channels.create({ name: 'tickets', type: 4, permissionOverwrites: catOverwrites });
+        }
+
+        const overwrites = [
+          { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] },
+          { id: targetUserId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] },
+        ];
+        if (staffRoleId) {
+          overwrites.push({
+            id: staffRoleId,
+            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageMessages]
+          });
+        }
+
+        const baseName = `ticket-${interaction.user.username || targetUserId}`
+          .toLowerCase()
+          .replace(/[^a-z0-9-]/g, '-')
+          .replace(/-+/g, '-')
+          .replace(/^-|-$/g, '')
+          .substring(0, 80) || `ticket-${targetUserId.slice(-6)}`;
+
+        const uniqueName = interaction.guild.channels.cache.some(c => c.name === baseName)
+          ? `${baseName}-${targetUserId.slice(-4)}`
+          : baseName;
+
+        const topic = `ticket:${targetUserId}:support`;
+        const ticketChannel = await interaction.guild.channels.create({
+          name: uniqueName,
+          type: 0,
+          parent: category.id,
+          permissionOverwrites: overwrites,
+          topic,
+        });
+
+        const embed = new EmbedBuilder()
+          .setTitle('🎫 Support Ticket')
+          .setDescription(`Ticket von <@${targetUserId}>\nBitte beschreibe dein Anliegen so genau wie möglich.`)
+          .setColor(0x8A2BE2)
+          .addFields({ name: 'Schließen', value: 'Staff kann das Ticket mit dem Button unten schließen.', inline: false })
+          .setTimestamp();
+
+          const closeBtn = new ButtonBuilder()
+            .setCustomId('ticket_close_vanta')
+          .setLabel('Close Ticket')
+          .setStyle(ButtonStyle.Danger);
+        const row = new ActionRowBuilder().addComponents(closeBtn);
+
+        await ticketChannel.send({ content: `<@${targetUserId}>`, embeds: [embed], components: [row] }).catch(() => {});
+
+        try {
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${ticketChannel} erstellt von <@${targetUserId}>`)] });
+        } catch (e) { console.error('ticket log send failed', e); }
+
+        return interaction.editReply(`✅ Ticket erstellt: ${ticketChannel}`);
+      } catch (e) {
+        console.error('ticket_create_btn interaction failed', e);
+        return interaction.editReply('Fehler beim Erstellen des Tickets.');
+      }
+    }
+
+    if (interaction.isButton() && interaction.customId === 'ticket_close_vanta') {
       await interaction.deferReply({ ephemeral: true });
       try {
         const channel = interaction.channel;
@@ -329,7 +435,12 @@ client.on('interactionCreate', async (interaction) => {
         const cfgPath = path.join(DATA_DIR, 'config.json');
         const cfg = loadJson(cfgPath, {});
         const isOwner = interaction.user.id === ownerId;
-        const isStaff = member ? (cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
+        let staffRoleId = cfg.staffRoleId ? String(cfg.staffRoleId).replace(/[<@&>]/g, '') : null;
+        if (!staffRoleId && interaction.guild) {
+          const byName = interaction.guild.roles.cache.find(r => isStaffLikeRoleName(r && r.name));
+          if (byName) staffRoleId = byName.id;
+        }
+        const isStaff = member ? (staffRoleId && member.roles.cache.has(staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
         if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
 
         const reason = `Geschlossen durch ${interaction.user.tag} via Button`;
@@ -347,15 +458,9 @@ client.on('interactionCreate', async (interaction) => {
         // DM owner
         try { const owner = await interaction.client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
 
-        // announce and remove category + channels
+        // remove only this ticket channel (keep shared category)
         try {
-          const parent = channel.parent;
-          if (parent) {
-            await parent.children.each(async (ch) => { try { await ch.delete().catch(()=>{}); } catch(e){} });
-            await parent.delete().catch(()=>{});
-          } else {
-            await channel.delete().catch(()=>{});
-          }
+          await channel.delete().catch(()=>{});
         } catch (e) { console.error('failed to remove ticket channels/category', e); }
 
         try {
@@ -1004,7 +1109,7 @@ client.on('messageCreate', async (message) => {
           { name: 'token preview', value: masked, inline: true },
           {
             name: 'env vars present',
-            value: `TOKEN=${!!process.env.TOKEN}  DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN}  GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`,
+            value: `TOKENSP=${!!process.env.TOKENSP}  TOKEN=${!!process.env.TOKEN}  DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN}  GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`,
             inline: false,
           }
         )
@@ -1029,61 +1134,23 @@ client.on('messageCreate', async (message) => {
       const existing = message.guild.channels.cache.filter(c => c.topic && c.topic.startsWith(`ticket:${userId}:`));
       if (existing.size >= maxOpen) return message.reply('Du hast bereits ein offenes Ticket. Bitte schließe es zuerst.');
 
-      // prepare names
-      const rawName = message.author.username || `user-${userId}`;
-      const categoryName = rawName;
-      let channelName = rawName.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').substring(0, 90) || `ticket-${userId}`;
+      // Send a professional ticket panel with a button (user can create their private ticket)
+      const panelEmbed = new EmbedBuilder()
+        .setTitle('🎫 Support Tickets')
+        .setDescription('Klicke auf **Create Ticket**, um ein privates Ticket zu eröffnen.\nEin Staff-Mitglied wird dir so schnell wie möglich helfen.')
+        .setColor(0x8A2BE2)
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
 
-      // permission overwrites - ensure role/user objects are resolved (avoid InvalidType)
-      const everyone = message.guild.roles.everyone;
-      // ensure member is cached
-      const memberObj = await message.guild.members.fetch(userId).catch(() => null);
-      // resolve staff role object (by id or name)
-      let staffRoleObj = null;
-      if (cfg.staffRoleId) {
-        const rid = String(cfg.staffRoleId).replace(/[<@&>]/g, '');
-        staffRoleObj = message.guild.roles.cache.get(rid) || message.guild.roles.cache.find(r => r.name === String(cfg.staffRoleId));
-      }
-      const overwrites = [ { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] } ];
-      if (staffRoleObj) overwrites.push({ id: staffRoleObj.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory, PermissionsBitField.Flags.ManageMessages, PermissionsBitField.Flags.ManageChannels] });
-      if (memberObj) overwrites.push({ id: memberObj.id, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
-      else overwrites.push({ id: userId, allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory] });
+      const createBtn = new ButtonBuilder()
+        .setCustomId('ticket_create_btn')
+        .setLabel('Create Ticket')
+        .setStyle(ButtonStyle.Primary);
+      const row = new ActionRowBuilder().addComponents(createBtn);
 
-      try {
-        // create category
-        const category = await message.guild.channels.create({ name: categoryName, type: 4, permissionOverwrites: overwrites }).catch(async (e) => {
-          // fallback: try with a unique suffix
-          const altName = `${categoryName}-${Date.now().toString().slice(-4)}`;
-          return await message.guild.channels.create({ name: altName, type: 4, permissionOverwrites: overwrites });
-        });
-
-        // ensure unique channel name under guild
-        let uniqueName = channelName;
-        if (message.guild.channels.cache.some(c => c.name === uniqueName && c.parentId === category.id)) uniqueName = `${uniqueName}-${userId.slice(-4)}`;
-
-        const topic = `ticket:${userId}:support`;
-        const ticketChannel = await message.guild.channels.create({ name: uniqueName, type: 0, parent: category.id, permissionOverwrites: overwrites, topic });
-
-        const embed = new EmbedBuilder().setTitle('Neues Ticket').setDescription(`Ticket von <@${userId}> — Typ: **support**`).setColor(0x8A2BE2).addFields({ name: 'Hinweis', value: 'Staff wird sich so schnell wie möglich darum kümmern. Nutze den Button unten, um das Ticket zu schließen.' });
-        const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
-        const row = new ActionRowBuilder().addComponents(closeBtn);
-
-        await ticketChannel.send({ content: `<@${userId}>`, embeds: [embed], components: [row] }).catch(()=>{});
-
-        // notify user
-        message.delete().catch(() => {});
-        await message.reply({ content: `Dein Ticket wurde erstellt: ${ticketChannel}` });
-
-        // log
-        try {
-          await sendLog(message.guild, { embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${ticketChannel} erstellt von <@${userId}> Typ: support`)] });
-        } catch (e) { console.error('ticket log send failed', e); }
-
-      } catch (e) {
-        console.error('ticket create failed', e);
-        return message.reply('Fehler beim Erstellen des Tickets.');
-      }
-
+      message.delete().catch(() => {});
+      const panelMsg = await message.channel.send({ embeds: [panelEmbed], components: [row] }).catch(() => null);
+      if (panelMsg) setTimeout(() => panelMsg.delete().catch(() => {}), 60_000);
       return;
     }
   } catch (e) { console.error('ticket command check failed', e); }
@@ -1907,7 +1974,12 @@ client.on('messageCreate', async (message) => {
     if (!message.guild) return message.reply('Dieses Kommando muss in einem Server verwendet werden.');
     const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
     const member = message.member;
-    const isStaff = (cfg.staffRoleId && member.roles.cache.has(cfg.staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild);
+    let staffRoleId = cfg.staffRoleId ? String(cfg.staffRoleId).replace(/[<@&>]/g, '') : null;
+    if (!staffRoleId && message.guild) {
+      const byName = message.guild.roles.cache.find(r => isStaffLikeRoleName(r && r.name));
+      if (byName) staffRoleId = byName.id;
+    }
+    const isStaff = (staffRoleId && member.roles.cache.has(staffRoleId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild);
     if (!isStaff) return message.reply('Nur Moderatoren oder Server-Admins können dieses Kommando verwenden.');
 
     const channel = message.channel;
@@ -1934,15 +2006,9 @@ client.on('messageCreate', async (message) => {
       // DM owner
       try { const owner = await client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
 
-      // remove category and its channels
+      // remove only this ticket channel (keep shared category)
       try {
-        const parent = channel.parent;
-        if (parent) {
-          parent.children.each(async (ch) => { try { await ch.delete().catch(()=>{}); } catch(e){} });
-          await parent.delete().catch(()=>{});
-        } else {
-          await channel.delete().catch(()=>{});
-        }
+        await channel.delete().catch(()=>{});
       } catch (e) { console.error('failed to remove ticket channels/category', e); }
 
       return message.channel.send('Ticket geschlossen und entfernt.');

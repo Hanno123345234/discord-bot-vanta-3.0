@@ -2,6 +2,7 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder
 const path = require('path');
 const fs = require('fs');
 const { createTranscript } = require('../utils/transcript');
+const { sendLog } = require('../utils/logger');
 
 function loadConfig() {
   const base = path.resolve(__dirname, '..');
@@ -52,7 +53,23 @@ module.exports = {
         const existing = guild.channels.cache.find(c => c.topic && c.topic.startsWith(`ticket:${userId}:`));
         if (existing) return interaction.editReply('Du hast bereits ein offenes Ticket. Bitte schließe es zuerst.');
 
-        const categoryId = config.ticketCategoryId || null;
+        // category: accept a real snowflake, otherwise ignore placeholder and fallback by name/create
+        let categoryId = config.ticketCategoryId || null;
+        if (categoryId && String(categoryId).includes('REPLACE_WITH')) categoryId = null;
+        if (categoryId) categoryId = String(categoryId).replace(/[<#>]/g, '');
+        if (categoryId && !/^\d+$/.test(categoryId)) categoryId = null;
+
+        if (!categoryId) {
+          const existingCat = guild.channels.cache.find(c => c && c.type === 4 && ['tickets', 'ticket', 'support', 'support-tickets'].includes(String(c.name || '').toLowerCase())) || null;
+          if (existingCat) categoryId = existingCat.id;
+          else {
+            const catOverwrites = [ { id: everyone.id, deny: [PermissionsBitField.Flags.ViewChannel] } ];
+            if (staffId) catOverwrites.push({ id: staffId, allow: [PermissionsBitField.Flags.ViewChannel] });
+            const createdCat = await guild.channels.create({ name: 'tickets', type: 4, permissionOverwrites: catOverwrites });
+            categoryId = createdCat.id;
+          }
+        }
+
         const channelName = `ticket-${userId}`;
 
         const everyone = guild.roles.everyone;
@@ -158,21 +175,10 @@ module.exports = {
           }
         } catch (e) {}
 
-        // remove ticket: delete all channels in the parent category (if exists) and then delete the category
+        // remove ticket: delete only this ticket channel (keep shared category)
         try {
-          const parent = channel.parent;
-          // send final notice to the channel before deletion if possible
           try { await channel.send({ embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Dieses Ticket wurde geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] }).catch(()=>{}); } catch(e) {}
-
-          if (parent) {
-            // delete each child channel (skip already deleting channel if needed)
-            for (const ch of parent.children.values()) {
-              try { await ch.delete().catch(()=>{}); } catch (e) {}
-            }
-            try { await parent.delete().catch(()=>{}); } catch (e) { console.error('failed to delete parent category', e); }
-          } else {
-            try { await channel.delete().catch(()=>{}); } catch (e) { console.error('failed to delete ticket channel', e); }
-          }
+          try { await channel.delete().catch(()=>{}); } catch (e) { console.error('failed to delete ticket channel', e); }
         } catch (e) { console.error('failed to remove ticket', e); }
 
         try { await interaction.editReply({ content: 'Ticket geschlossen, Transkript erstellt und Kanal/Kategorie gelöscht.' }); } catch(e) {}
