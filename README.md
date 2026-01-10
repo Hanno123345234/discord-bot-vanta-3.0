@@ -10,14 +10,18 @@ npm install
 ```
 
 ### 2. Configure Environment
-Set `DISCORD_TOKEN` environment variable with your bot token.
+Set a bot token via **one** of these options:
+- Environment variable: `DISCORD_TOKEN` (preferred)
+- Alternative env vars (for hosting panels): `TOKEN`, `DISCORD_BOT_TOKEN`, `BOT_TOKEN`, or `GIT_ACCESS_TOKEN`
+- Upload `token.txt` into the project root (file must contain **only** the token)
 
 Optional: Set `PREFIX` (default: `!`)
 
 ### 3. Configure Channels
 Edit `config.json` with your Discord channel IDs:
 - `logChannelId` — General logs
-- `modLogChannelId` — Moderation logs
+- `moderationLogChannelId` — Moderation logs (preferred)
+- `modLogChannelId` — Moderation logs (fallback)
 - `auditLogChannelId` — Audit logs
 - `rejectedLogChannelId` — Rejected actions
 - `welcomeChannelId` — Welcome/leave messages
@@ -26,6 +30,14 @@ Edit `config.json` with your Discord channel IDs:
 ```bash
 npm start
 ```
+
+## 🖥️ Cybrancee / Pterodactyl Panel
+
+- Startup command: `npm start` (or `node index.js`)
+- Put your Discord bot token into the panel variable you have available:
+	- If the panel only provides **"GIT ACCESS TOKEN"**, paste your Discord bot token there (it becomes `GIT_ACCESS_TOKEN`).
+	- Otherwise use `DISCORD_TOKEN` (or `TOKEN`).
+- Restart the server after changing Startup variables.
 
 ## 📋 Commands
 
@@ -43,7 +55,7 @@ npm start
 - `!role <user> <role>` — Assign role
 
 ### Logs & History
-- `!md <user> [page]` — View modlogs (8/page)
+- `!md <user> [page]` — View modlogs (5/page)
 - `!mds <user> [page]` — View destaff logs (8/page)
 
 ### Management

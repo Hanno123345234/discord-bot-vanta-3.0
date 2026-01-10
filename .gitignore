@@ -18,6 +18,16 @@ yarn.lock
 # Token file
 token.txt
 
+# Runtime bot data (keep out of GitHub)
+actions.md
+modlogs.json
+destaffs.json
+blacklist.json
+staff_role_history.json
+
+# Ticket transcripts
+transcripts/
+
 # Python
 __pycache__/
 *.py[cod]

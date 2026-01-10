@@ -46,7 +46,7 @@ async function sendLog(guild, payload) {
     }
 
     if (!ch && (category === 'moderation' || category === 'mod')) {
-      ch = await getById(cfg.modLogChannelId);
+      ch = await getById(cfg.moderationLogChannelId || cfg.modLogChannelId);
       if (!ch) ch = fallbackByName(['mod-logs','moderation-logs','moderation','modlogs']);
     }
 

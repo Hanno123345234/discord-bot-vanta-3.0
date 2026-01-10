@@ -20,6 +20,8 @@ function resolveToken() {
   const envCandidates = [
     { key: 'TOKEN', val: process.env.TOKEN },
     { key: 'DISCORD_TOKEN', val: process.env.DISCORD_TOKEN },
+    { key: 'DISCORD_BOT_TOKEN', val: process.env.DISCORD_BOT_TOKEN },
+    { key: 'BOT_TOKEN', val: process.env.BOT_TOKEN },
     { key: 'GIT_ACCESS_TOKEN', val: process.env.GIT_ACCESS_TOKEN },
   ];
 
@@ -78,7 +80,7 @@ function validateTokenFormat(t) {
   return t.length >= 50;
 }
 
-const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ActivityType } = require('discord.js');
+const { Client, GatewayIntentBits, Partials, EmbedBuilder, PermissionsBitField, ActionRowBuilder, StringSelectMenuBuilder, ButtonBuilder, ButtonStyle, ActivityType, AuditLogEvent } = require('discord.js');
 
 // Safe import of transcript with fallback - prevents crash if file missing on server
 let createTranscript;
@@ -95,6 +97,9 @@ const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
 const BLACKLIST_PATH = path.join(DATA_DIR, 'blacklist.json');
 const DESTAFFS_PATH = path.join(DATA_DIR, 'destaffs.json');
 const DESTAFF_LOG_CHANNEL_ID = process.env.DESTAFF_LOG_CHANNEL_ID || '1459166993381851247';
+const DESTAFF_BAN_GUILD_ID = process.env.DESTAFF_BAN_GUILD_ID || '1459164535112990865';
+const DESTAFF_BAN_GUILD_NAME = process.env.DESTAFF_BAN_GUILD_NAME || 'Staff hub Test server';
+const STAFF_ROLE_HISTORY_PATH = path.join(DATA_DIR, 'staff_role_history.json');
 
 function loadJson(p, fallback) {
   try {
@@ -130,6 +135,52 @@ function appendActionMd(guild, moderatorTag, title, details) {
 let modlogs = loadJson(MODLOGS_PATH, { lastCase: 10000, cases: [] });
 let blacklist = loadJson(BLACKLIST_PATH, { blacklisted: [] });
 let destaffs = loadJson(DESTAFFS_PATH, { lastCase: 10000, cases: [] });
+let staffRoleHistory = loadJson(STAFF_ROLE_HISTORY_PATH, { guilds: {} });
+
+function isStaffLikeRoleName(name) {
+  if (!name) return false;
+  const n = String(name).toLowerCase();
+  return ['staff', 'admin', 'administrator', 'moderator', 'mod'].some(k => n.includes(k));
+}
+
+function ensureStaffHistoryGuild(guildId) {
+  if (!staffRoleHistory.guilds) staffRoleHistory.guilds = {};
+  if (!staffRoleHistory.guilds[guildId]) staffRoleHistory.guilds[guildId] = { users: {} };
+  if (!staffRoleHistory.guilds[guildId].users) staffRoleHistory.guilds[guildId].users = {};
+  return staffRoleHistory.guilds[guildId];
+}
+
+function setStaffRoleSince(guildId, userId, roleId, ts) {
+  const g = ensureStaffHistoryGuild(guildId);
+  if (!g.users[userId]) g.users[userId] = { roles: {} };
+  if (!g.users[userId].roles) g.users[userId].roles = {};
+  if (!g.users[userId].roles[roleId]) {
+    g.users[userId].roles[roleId] = ts;
+    saveJson(STAFF_ROLE_HISTORY_PATH, staffRoleHistory);
+  }
+}
+
+function clearStaffRoleSince(guildId, userId, roleId) {
+  try {
+    const g = staffRoleHistory.guilds && staffRoleHistory.guilds[guildId];
+    const u = g && g.users && g.users[userId];
+    if (u && u.roles && u.roles[roleId]) {
+      delete u.roles[roleId];
+      saveJson(STAFF_ROLE_HISTORY_PATH, staffRoleHistory);
+    }
+  } catch (e) {}
+}
+
+function getStaffRoleSince(guildId, userId, roleId) {
+  try {
+    const g = staffRoleHistory.guilds && staffRoleHistory.guilds[guildId];
+    const u = g && g.users && g.users[userId];
+    const ts = u && u.roles && u.roles[roleId];
+    return typeof ts === 'number' ? ts : null;
+  } catch (e) {
+    return null;
+  }
+}
 
 // Automod configuration (env vars override file)
 const DEFAULT_AUTOMOD = {
@@ -177,11 +228,13 @@ const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildModeration,
     GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.DirectMessages
   ],
-  partials: [Partials.Channel]
+  partials: [Partials.Channel, Partials.Message, Partials.User, Partials.GuildMember]
 });
 
 function parseId(arg) {
@@ -227,6 +280,21 @@ function humanDuration(ms) {
   return parts.join(' ');
 }
 
+function humanDurationLong(ms) {
+  if (!ms || ms <= 0) return '0 seconds';
+  const units = [
+    { name: 'day', ms: 86400000 },
+    { name: 'hour', ms: 3600000 },
+    { name: 'minute', ms: 60000 },
+    { name: 'second', ms: 1000 }
+  ];
+  for (const u of units) {
+    const n = Math.floor(ms / u.ms);
+    if (n > 0) return `${n} ${u.name}${n === 1 ? '' : 's'}`;
+  }
+  return '0 seconds';
+}
+
 client.on('interactionCreate', async (interaction) => {
   // Handle ticket close button interactions
   try {
@@ -257,7 +325,7 @@ client.on('interactionCreate', async (interaction) => {
         } catch (e) { console.error('ticket log send failed', e); }
 
         // DM owner
-        try { const owner = await interaction.client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
+        try { const owner = await interaction.client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
 
         // announce and remove category + channels
         try {
@@ -285,29 +353,70 @@ client.on('interactionCreate', async (interaction) => {
   // Music features disabled (requires @discordjs/voice)
 });
 
-function sendModEmbedToUser(user, type, { guild, moderatorTag, reason, caseId }) {
-  const color = 0x8A2BE2;
-  const actionWord = (t) => {
-    const lt = String(t||'').toLowerCase();
-    if (lt.includes('warn')) return 'warned';
-    if (lt.includes('ban')) return 'banned';
-    if (lt.includes('unban')) return 'unbanned';
-    if (lt.includes('mute')) return 'muted';
-    return lt;
-  };
-  const serverName = guild ? guild.name : 'Vanta Scrims';
-  const action = actionWord(type) || type || 'notified';
-  const reasonPart = reason ? `\nReason: ${reason}` : '';
-  const when = Date.now();
+function sendModEmbedToUser(user, type, { guild, moderatorTag, reason, caseId, durationText } = {}) {
+  const color = 0x87CEFA;
 
-  const desc = `You were ${action} in ${serverName}.${reasonPart}`;
+  const lt = String(type || '').toLowerCase();
+  const serverName = guild ? guild.name : 'this server';
+
+  const actionPhrase = (() => {
+    if (lt.includes('reason updated') || lt.includes('duration updated')) return 'received an update';
+    if (lt.includes('unban')) return 'were unbanned';
+    if (lt.includes('ban')) return 'were banned';
+    if (lt.includes('unmute')) return 'were unmuted';
+    if (lt.includes('mute')) return 'were muted';
+    if (lt.includes('warn')) return 'were warned';
+    if (lt.includes('kick')) return 'were kicked';
+    return type ? `were ${type}` : 'received an update';
+  })();
+
+  const r = (reason && String(reason).trim()) ? String(reason).trim() : 'No reason provided';
+  const desc = `You ${actionPhrase} in ${serverName} for (${r}).`;
 
   const embed = new EmbedBuilder()
     .setColor(color)
     .setDescription(desc)
-    .setFooter({ text: `${formatFooterTime(when)}` });
+    .setTimestamp();
 
   return user.send({ embeds: [embed] }).catch(() => null);
+}
+
+function buildSmallModerationEmbed({
+  title,
+  targetId,
+  targetAvatarUrl,
+  moderatorId,
+  reason,
+  caseId,
+  durationText,
+  nowTs
+} = {}) {
+  const ts = nowTs || Math.floor(Date.now() / 1000);
+  const r = (reason && String(reason).trim()) ? String(reason).trim() : '';
+  const reasonShort = r ? r.substring(0, 240) : '';
+  const modText = moderatorId ? `<@${moderatorId}> (${moderatorId})` : 'Unbekannt';
+
+  const embed = new EmbedBuilder()
+    .setTitle(title || 'Moderation')
+    .setDescription(targetId ? `<@${targetId}>${reasonShort ? `\nGrund: ${reasonShort}` : ''}` : (reasonShort ? `Grund: ${reasonShort}` : ''))
+    .setColor(0x87CEFA);
+
+  if (targetAvatarUrl) embed.setThumbnail(targetAvatarUrl);
+
+  const fields = [
+    { name: 'Moderator', value: modText, inline: true },
+  ];
+
+  if (durationText) fields.push({ name: 'Dauer', value: String(durationText).substring(0, 120), inline: true });
+  fields.push({ name: 'Zeit', value: `<t:${ts}:R>`, inline: true });
+
+  embed.addFields(fields);
+
+  const footerBits = [];
+  if (targetId) footerBits.push(`UserID: ${targetId}`);
+  if (caseId !== undefined && caseId !== null) footerBits.push(`Fall: ${caseId}`);
+  if (footerBits.length) embed.setFooter({ text: footerBits.join(' | ') });
+  return embed;
 }
 
 function createChannelConfirmEmbed(text, caseId, color = 0x8A2BE2) {
@@ -369,6 +478,7 @@ client.on('guildMemberAdd', async (member) => {
   try {
     // Auto-assign member role
     const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const joinTs = Math.floor(Date.now() / 1000);
     try {
       const memberRole = member.guild.roles.cache.find(r => r.name.toLowerCase() === 'member') || member.guild.roles.cache.find(r => r.name.toLowerCase() === 'members');
       if (memberRole && !member.roles.cache.has(memberRole.id)) {
@@ -377,44 +487,129 @@ client.on('guildMemberAdd', async (member) => {
     } catch (e) { console.error('Failed to assign member role', e); }
 
     // Send welcome message to welcome channel
-    if (cfg.welcomeChannelId) {
-      const welcomeCh = member.guild.channels.cache.get(cfg.welcomeChannelId) || await member.guild.channels.fetch(cfg.welcomeChannelId).catch(() => null);
+    const welcomeChannelId = process.env.WELCOME_CHANNEL_ID || cfg.welcomeChannelId;
+    const rulesChannelId = process.env.RULES_CHANNEL_ID || cfg.rulesChannelId || welcomeChannelId;
+
+    if (welcomeChannelId) {
+      const welcomeCh = member.guild.channels.cache.get(welcomeChannelId) || await member.guild.channels.fetch(welcomeChannelId).catch(() => null);
       if (welcomeCh && isTextLike(welcomeCh)) {
         const welcomeEmbed = new EmbedBuilder()
-          .setTitle('👋 WELCOME')
-          .setDescription(`Welcome to **${member.guild.name}**, <@${member.id}>!\n\nWe're glad to have you here. Make sure to read the rules and have fun!`)
+          .setTitle('👋 WILLKOMMEN')
+          .setDescription(
+            `Willkommen auf **${member.guild.name}**, <@${member.id}>!\n\n` +
+            `Bitte lies unbedingt die Regeln in <#${rulesChannelId}>.\n\n` +
+            `Beitritt: <t:${joinTs}:F> (<t:${joinTs}:R>)`
+          )
           .setColor(0x8A2BE2)
           .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
           .addFields(
             { name: 'Member', value: `${member.user.tag}`, inline: true },
             { name: 'ID', value: `${member.id}`, inline: true },
             { name: 'Account Created', value: `<t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`, inline: false }
-          )
-          .setFooter({ text: `Member #${member.guild.memberCount}` })
-          .setTimestamp();
+          );
         await welcomeCh.send({ embeds: [welcomeEmbed] }).catch(() => {});
       }
     }
 
-    // Log to audit channel
-    const logCh = findLogChannel(member.guild);
-    if (!logCh || !isTextLike(logCh)) return;
-    const embed = new EmbedBuilder()
-      .setTitle('User joined')
-      .setColor(0x2ECC71)
-      .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
-      .addFields(
-        { name: 'User', value: `<@${member.id}> (${member.user.tag})`, inline: true },
-        { name: 'ID', value: `${member.id}`, inline: true },
-        { name: 'Joined', value: `${new Date().toLocaleString()}`, inline: false }
-      ).setTimestamp()
-      .setFooter(buildFooter(member.guild));
-    await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+    // Join logs (German, light blue, Hammertime)
+    const joinLogChannelId = process.env.JOIN_LOG_CHANNEL_ID || cfg.joinLogChannelId;
+    if (joinLogChannelId) {
+      const joinLogCh = member.guild.channels.cache.get(joinLogChannelId) || await member.guild.channels.fetch(joinLogChannelId).catch(() => null);
+      if (joinLogCh && isTextLike(joinLogCh)) {
+        const createdTs = Math.floor(member.user.createdTimestamp / 1000);
+        const joinLogEmbed = new EmbedBuilder()
+          .setTitle('Mitglied beigetreten')
+          .setDescription(`<@${member.id}>`) 
+          .setColor(0x87CEFA)
+          .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+          .addFields(
+            { name: 'ID', value: `${member.id}`, inline: true },
+            { name: 'Account-Alter', value: `<t:${createdTs}:R>`, inline: true }
+          );
+        await joinLogCh.send({ embeds: [joinLogEmbed] }).catch(() => {});
+      }
+    } else {
+      // Fallback: log to general audit channel if joinLogChannelId is not configured
+      const logCh = findLogChannel(member.guild);
+      if (!logCh || !isTextLike(logCh)) return;
+      const embed = new EmbedBuilder()
+        .setTitle('User joined')
+        .setColor(0x2ECC71)
+        .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+        .addFields(
+          { name: 'User', value: `<@${member.id}> (${member.user.tag})`, inline: true },
+          { name: 'ID', value: `${member.id}`, inline: true },
+          { name: 'Joined', value: `<t:${joinTs}:F> (<t:${joinTs}:R>)`, inline: false }
+        ).setTimestamp()
+        .setFooter(buildFooter(member.guild));
+      await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+    }
   } catch (e) { console.error('guildMemberAdd log failed', e); }
+});
+
+// Track when staff-like roles are added/removed (for duration reporting in -destaff)
+client.on('guildMemberUpdate', async (oldMember, newMember) => {
+  try {
+    if (!oldMember || !newMember) return;
+    if (!newMember.guild) return;
+
+    const oldRoles = oldMember.roles ? oldMember.roles.cache : null;
+    const newRoles = newMember.roles ? newMember.roles.cache : null;
+    if (!oldRoles || !newRoles) return;
+
+    // Added roles
+    for (const [rid, role] of newRoles) {
+      if (!oldRoles.has(rid) && isStaffLikeRoleName(role.name)) {
+        setStaffRoleSince(newMember.guild.id, newMember.id, rid, Date.now());
+      }
+    }
+
+    // Removed roles
+    for (const [rid, role] of oldRoles) {
+      if (!newRoles.has(rid) && isStaffLikeRoleName(role.name)) {
+        clearStaffRoleSince(newMember.guild.id, newMember.id, rid);
+      }
+    }
+  } catch (e) {
+    console.error('guildMemberUpdate staff-role tracking failed', e);
+  }
 });
 
 client.on('guildMemberRemove', async (member) => {
   try {
+    // If this removal is due to a kick/ban, log it as moderation instead of a normal leave
+    try {
+      const now = Date.now();
+      const banLogs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 6 }).catch(() => null);
+      const banEntry = banLogs && banLogs.entries
+        ? banLogs.entries.find(e => e && e.target && String(e.target.id) === String(member.id) && (now - e.createdTimestamp) < 15000)
+        : null;
+      if (banEntry) {
+        // Ban is handled by guildBanAdd for a richer payload; skip leave logging
+        return;
+      }
+
+      const kickLogs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 6 }).catch(() => null);
+      const kickEntry = kickLogs && kickLogs.entries
+        ? kickLogs.entries.find(e => e && e.target && String(e.target.id) === String(member.id) && (now - e.createdTimestamp) < 15000)
+        : null;
+
+      if (kickEntry) {
+        const nowTs = Math.floor(Date.now() / 1000);
+        const targetUser = member.user;
+        const embed = buildSmallModerationEmbed({
+          title: 'Mitglied gekickt',
+          targetId: member.id,
+          targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+          moderatorId: kickEntry.executor ? kickEntry.executor.id : null,
+          reason: kickEntry.reason || '—',
+          nowTs
+        });
+        await sendLog(member.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+        return;
+      }
+    } catch (e) {}
+
     // Send leave message to welcome channel
     const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
     if (cfg.welcomeChannelId) {
@@ -435,22 +630,105 @@ client.on('guildMemberRemove', async (member) => {
       }
     }
 
-    // Log to audit channel
-    const logCh = findLogChannel(member.guild);
-    if (!logCh || !isTextLike(logCh)) return;
-    const roles = member.roles ? member.roles.cache.filter(r => r.name !== '@everyone').map(r => r.name).join(', ') : '';
-    const embed = new EmbedBuilder()
-      .setTitle('User left')
-      .setColor(0xE74C3C)
-      .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
-      .addFields(
-        { name: 'User', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
-        { name: 'ID', value: `${member.id}`, inline: true },
-        { name: 'Roles', value: roles || '—', inline: false }
-      ).setTimestamp()
-      .setFooter(buildFooter(member.guild));
-    await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+    // Leave logs (German, light blue, Hammertime)
+    const leaveLogChannelId = process.env.LEAVE_LOG_CHANNEL_ID || cfg.leaveLogChannelId;
+    if (leaveLogChannelId) {
+      const leaveLogCh = member.guild.channels.cache.get(leaveLogChannelId) || await member.guild.channels.fetch(leaveLogChannelId).catch(() => null);
+      if (leaveLogCh && isTextLike(leaveLogCh)) {
+        const createdTs = Math.floor(member.user.createdTimestamp / 1000);
+        const leaveLogEmbed = new EmbedBuilder()
+          .setTitle('Mitglied verlassen')
+          .setDescription(`<@${member.id}>`)
+          .setColor(0x87CEFA)
+          .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+          .addFields(
+            { name: 'ID', value: `${member.id}`, inline: true },
+            { name: 'Account-Alter', value: `<t:${createdTs}:R>`, inline: true }
+          );
+        await leaveLogCh.send({ embeds: [leaveLogEmbed] }).catch(() => {});
+      }
+    } else {
+      // Fallback: log to general audit channel if leaveLogChannelId is not configured
+      const logCh = findLogChannel(member.guild);
+      if (!logCh || !isTextLike(logCh)) return;
+      const roles = member.roles ? member.roles.cache.filter(r => r.name !== '@everyone').map(r => r.name).join(', ') : '';
+      const embed = new EmbedBuilder()
+        .setTitle('User left')
+        .setColor(0xE74C3C)
+        .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
+        .addFields(
+          { name: 'User', value: `${member.user.tag} (<@${member.id}>)`, inline: true },
+          { name: 'ID', value: `${member.id}`, inline: true },
+          { name: 'Roles', value: roles || '—', inline: false }
+        ).setTimestamp()
+        .setFooter(buildFooter(member.guild));
+      await sendLog(member.guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+    }
   } catch (e) { console.error('guildMemberRemove log failed', e); }
+});
+
+client.on('guildBanAdd', async (ban) => {
+  try {
+    if (!ban || !ban.guild || !ban.user) return;
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    let moderatorId = null;
+    let reason = ban.reason || null;
+    try {
+      const logs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 6 }).catch(() => null);
+      const entry = logs && logs.entries
+        ? logs.entries.find(e => e && e.target && String(e.target.id) === String(ban.user.id) && (Date.now() - e.createdTimestamp) < 15000)
+        : null;
+      if (entry) {
+        moderatorId = entry.executor ? entry.executor.id : null;
+        if (!reason && entry.reason) reason = entry.reason;
+      }
+    } catch (e) {}
+
+    const embed = buildSmallModerationEmbed({
+      title: 'Nutzer gebannt',
+      targetId: ban.user.id,
+      targetAvatarUrl: ban.user.displayAvatarURL({ extension: 'png', size: 256 }),
+      moderatorId,
+      reason: reason || '—',
+      nowTs
+    });
+    await sendLog(ban.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+  } catch (e) {
+    console.error('guildBanAdd log failed', e);
+  }
+});
+
+client.on('guildBanRemove', async (ban) => {
+  try {
+    if (!ban || !ban.guild || !ban.user) return;
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    let moderatorId = null;
+    let reason = ban.reason || null;
+    try {
+      const logs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanRemove, limit: 6 }).catch(() => null);
+      const entry = logs && logs.entries
+        ? logs.entries.find(e => e && e.target && String(e.target.id) === String(ban.user.id) && (Date.now() - e.createdTimestamp) < 15000)
+        : null;
+      if (entry) {
+        moderatorId = entry.executor ? entry.executor.id : null;
+        if (!reason && entry.reason) reason = entry.reason;
+      }
+    } catch (e) {}
+
+    const embed = buildSmallModerationEmbed({
+      title: 'Nutzer entbannt',
+      targetId: ban.user.id,
+      targetAvatarUrl: ban.user.displayAvatarURL({ extension: 'png', size: 256 }),
+      moderatorId,
+      reason: reason || '—',
+      nowTs
+    });
+    await sendLog(ban.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+  } catch (e) {
+    console.error('guildBanRemove log failed', e);
+  }
 });
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
@@ -467,7 +745,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
           { name: 'Channel', value: `${newState.channel ? `${newState.channel.name}` : newState.channelId}`, inline: true }
         ).setTimestamp()
         .setFooter(buildFooter(guild));
-      await sendLog(guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+      await sendLog(guild, { embeds: [embed], category: 'audit' }).catch(()=>{});
     }
     // leave
     if (oldState.channelId && !newState.channelId) {
@@ -478,7 +756,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
           { name: 'Channel', value: `${oldState.channel ? `${oldState.channel.name}` : oldState.channelId}`, inline: true }
         ).setTimestamp()
         .setFooter(buildFooter(guild));
-      await sendLog(guild, { embeds: [embed], category: 'mod' });
+      await sendLog(guild, { embeds: [embed], category: 'audit' });
     }
   } catch (e) { console.error('voiceStateUpdate log failed', e); }
 });
@@ -487,26 +765,109 @@ client.on('messageDelete', async (message) => {
   try {
     const guild = message.guild;
     if (!guild) return;
-    const logCh = findLogChannel(guild);
+
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const messageLogChannelId = process.env.MESSAGE_LOG_CHANNEL_ID || cfg.messageLogChannelId;
+    const logCh = messageLogChannelId
+      ? (guild.channels.cache.get(messageLogChannelId) || await guild.channels.fetch(messageLogChannelId).catch(() => null))
+      : findLogChannel(guild);
     if (!logCh || !isTextLike(logCh)) return;
+
     // message may be partial
     let author = message.author;
     let content = message.content || '';
     try { if (message.partial) { const fetched = await message.fetch().catch(()=>null); if (fetched) { author = fetched.author; content = fetched.content; } } } catch(e){}
     const link = (guild && message.channelId) ? `https://discord.com/channels/${guild.id}/${message.channelId}/${message.id}` : 'n/a';
+    const nowTs = Math.floor(Date.now() / 1000);
     const embed = new EmbedBuilder()
-      .setTitle('Message deleted')
-      .setColor(0xE74C3C)
+      .setTitle('Nachricht gelöscht')
+      .setDescription(author ? `<@${author.id}>` : 'Unbekannter Autor')
+      .setColor(0x87CEFA)
+      .setThumbnail(author && typeof author.displayAvatarURL === 'function' ? author.displayAvatarURL({ extension: 'png', size: 256 }) : null)
       .addFields(
-        { name: 'Channel', value: `${message.channel ? `${message.channel.name}` : message.channelId || 'Unknown'}`, inline: true },
-        { name: 'Message ID', value: `${message.id}`, inline: true },
-        { name: 'Link', value: link, inline: false },
-        { name: 'Author', value: author ? `${author.tag} (${author.id})` : 'Unknown', inline: false },
-        { name: 'Message', value: content ? content.substring(0, 1800) : 'Content not available', inline: false }
-      ).setTimestamp()
-      .setFooter(buildFooter(guild));
-    await sendLog(guild, { embeds: [embed], category: 'mod' }).catch(()=>{});
+        { name: 'ID', value: `${message.id}`, inline: true },
+        { name: 'Kanal', value: message.channelId ? `<#${message.channelId}>` : 'Unbekannt', inline: true },
+        { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: false },
+        { name: 'Inhalt', value: content ? content.substring(0, 700) : '—', inline: false }
+      );
+    await logCh.send({ embeds: [embed] }).catch(() => {});
   } catch (e) { console.error('messageDelete log failed', e); }
+});
+
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+  try {
+    const guild = newMessage.guild || oldMessage.guild;
+    if (!guild) return;
+
+    // Ignore bot edits
+    const author = (newMessage && newMessage.author) || (oldMessage && oldMessage.author);
+    if (author && author.bot) return;
+
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const messageLogChannelId = process.env.MESSAGE_LOG_CHANNEL_ID || cfg.messageLogChannelId;
+    const logCh = messageLogChannelId
+      ? (guild.channels.cache.get(messageLogChannelId) || await guild.channels.fetch(messageLogChannelId).catch(() => null))
+      : findLogChannel(guild);
+    if (!logCh || !isTextLike(logCh)) return;
+
+    // Fetch partials for reliable content
+    let oldFetched = oldMessage;
+    let newFetched = newMessage;
+    try { if (oldFetched && oldFetched.partial) oldFetched = await oldFetched.fetch().catch(() => oldFetched); } catch (e) {}
+    try { if (newFetched && newFetched.partial) newFetched = await newFetched.fetch().catch(() => newFetched); } catch (e) {}
+
+    const before = (oldFetched && typeof oldFetched.content === 'string') ? oldFetched.content : '';
+    const after = (newFetched && typeof newFetched.content === 'string') ? newFetched.content : '';
+    if ((before || '') === (after || '')) return;
+
+    const channelId = (newFetched && newFetched.channelId) || (oldFetched && oldFetched.channelId);
+    const msgId = (newFetched && newFetched.id) || (oldFetched && oldFetched.id);
+    const link = (guild && channelId && msgId) ? `https://discord.com/channels/${guild.id}/${channelId}/${msgId}` : 'n/a';
+    const nowTs = Math.floor(Date.now() / 1000);
+
+    const embed = new EmbedBuilder()
+      .setTitle('Nachricht bearbeitet')
+      .setDescription(author ? `<@${author.id}>` : 'Unbekannter Autor')
+      .setColor(0x87CEFA)
+      .setThumbnail(author && typeof author.displayAvatarURL === 'function' ? author.displayAvatarURL({ extension: 'png', size: 256 }) : null)
+      .addFields(
+        { name: 'ID', value: `${msgId || '—'}`, inline: true },
+        { name: 'Kanal', value: channelId ? `<#${channelId}>` : 'Unbekannt', inline: true },
+        { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: false },
+        { name: 'Update', value: `${before ? before.substring(0, 350) : '—'}\n→\n${after ? after.substring(0, 350) : '—'}`, inline: false }
+      );
+    await logCh.send({ embeds: [embed] }).catch(() => {});
+  } catch (e) {
+    console.error('messageUpdate log failed', e);
+  }
+});
+
+client.on('messageDeleteBulk', async (messages, channel) => {
+  try {
+    const guild = channel && channel.guild;
+    if (!guild) return;
+
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const messageLogChannelId = process.env.MESSAGE_LOG_CHANNEL_ID || cfg.messageLogChannelId;
+    const logCh = messageLogChannelId
+      ? (guild.channels.cache.get(messageLogChannelId) || await guild.channels.fetch(messageLogChannelId).catch(() => null))
+      : findLogChannel(guild);
+    if (!logCh || !isTextLike(logCh)) return;
+
+    const nowTs = Math.floor(Date.now() / 1000);
+    const count = messages && typeof messages.size === 'number' ? messages.size : (Array.isArray(messages) ? messages.length : 0);
+    const embed = new EmbedBuilder()
+      .setTitle('Mehrere Nachrichten gelöscht')
+      .setColor(0x87CEFA)
+      .addFields(
+        { name: 'Kanal', value: channel && channel.id ? `<#${channel.id}>` : 'Unbekannt', inline: true },
+        { name: 'Anzahl', value: `${count}`, inline: true },
+        { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: false }
+      );
+    await logCh.send({ embeds: [embed] }).catch(() => {});
+  } catch (e) {
+    console.error('messageDeleteBulk log failed', e);
+  }
 });
 
 // Ticket system: load modular ready + interaction handlers (keeps main file unchanged)
@@ -557,7 +918,7 @@ client.on('messageCreate', async (message) => {
       if (!targetUser) return message.reply('User nicht gefunden.');
 
       const embed = new EmbedBuilder()
-        .setColor(0x8A2BE2)
+        .setColor(0x87CEFA)
         .setTitle('Nachricht')
         .setDescription(dmText.substring(0, 4000))
         .setTimestamp()
@@ -574,7 +935,7 @@ client.on('messageCreate', async (message) => {
         await sendLog(message.guild, {
           embeds: [
             new EmbedBuilder()
-              .setColor(0x8A2BE2)
+              .setColor(0x87CEFA)
               .setTitle('DM gesendet')
               .setDescription(`An: <@${targetUser.id}>\nVon: ${message.author.tag}\n\n${dmText.substring(0, 3500)}`)
               .setTimestamp()
@@ -731,7 +1092,7 @@ client.on('messageCreate', async (message) => {
 
           // Send a compact DM to the user (styled same as other mod DMs) and post the compact log in the log channel
           try {
-            await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId });
+            await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId, durationText: `${cfg.muteMinutes} minutes` });
           } catch (e) {}
 
           try {
@@ -788,11 +1149,15 @@ client.on('messageCreate', async (message) => {
           }
           const chConfirm = createChannelConfirmEmbed(`Deleted ${deletedTotal} messages from this channel.`);
           await message.channel.send({ embeds: [chConfirm] }).catch(()=>{});
-          const logEmbed = new EmbedBuilder().setTitle('Messages purged').setColor(0xE74C3C)
+          const nowTs = Math.floor(Date.now() / 1000);
+          const logEmbed = new EmbedBuilder()
+            .setTitle('Nachrichten gelöscht (Purge)')
+            .setColor(0x87CEFA)
             .addFields(
-              { name: 'Deleted', value: `${deletedTotal}`, inline: true },
-              { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
-            ).setTimestamp();
+              { name: 'Anzahl', value: `${deletedTotal}`, inline: true },
+              { name: 'Moderator', value: `<@${message.author.id}>`, inline: true },
+              { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: true }
+            );
           await sendLog(message.guild, { embeds: [logEmbed], category: 'moderation' }).catch(()=>{});
         } catch (e) {
           console.error('purg command failed', e);
@@ -832,12 +1197,16 @@ client.on('messageCreate', async (message) => {
         }
         const chConfirm = createChannelConfirmEmbed(`Deleted ${deletedTotal} messages from <@${targetId}>.`);
         await message.channel.send({ embeds: [chConfirm] }).catch(()=>{});
-        const logEmbed = new EmbedBuilder().setTitle('Messages purged').setColor(0xE74C3C)
+        const nowTs = Math.floor(Date.now() / 1000);
+        const logEmbed = new EmbedBuilder()
+          .setTitle('Nachrichten gelöscht (Purge)')
+          .setColor(0x87CEFA)
           .addFields(
-            { name: 'User', value: `${targetId}`, inline: true },
-            { name: 'Deleted', value: `${deletedTotal}`, inline: true },
-            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
-          ).setTimestamp();
+            { name: 'Ziel', value: `<@${targetId}>`, inline: true },
+            { name: 'Anzahl', value: `${deletedTotal}`, inline: true },
+            { name: 'Moderator', value: `<@${message.author.id}>`, inline: true },
+            { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: true }
+          );
         await sendLog(message.guild, { embeds: [logEmbed], category: 'moderation' }).catch(()=>{});
       } catch (e) {
         console.error('purg command failed', e);
@@ -888,7 +1257,8 @@ client.on('messageCreate', async (message) => {
       const reason = rest.slice(1).join(' ') || 'Kein Grund angegeben';
       if (!id || !/^\d+$/.test(id)) return message.reply('Bitte gib eine gültige User-ID oder Mention an.');
 
-      const shouldBan = cmd.toLowerCase() === 'destaffban';
+      // As requested: always ban (destaff + ban)
+      const shouldBan = true;
       let member = null;
       try {
         member = await message.guild.members.fetch(id).catch(() => null);
@@ -898,6 +1268,8 @@ client.on('messageCreate', async (message) => {
 
       const removedRoles = [];
       const failedRoles = [];
+      const removedRoleDurations = [];
+      const errors = [];
       const botMember = message.guild.members.me;
       const botHighest = botMember.roles.highest;
       const rolesToRemove = ['staff', 'admin', 'administrator', 'moderator', 'mod'];
@@ -907,49 +1279,132 @@ client.on('messageCreate', async (message) => {
         if (!rolesToRemove.some(r => role.name.toLowerCase().includes(r))) continue;
         if (role.position >= botHighest.position) {
           failedRoles.push(role.name);
+          errors.push(`Role too high to remove: ${role.name}`);
           continue;
         }
         try {
           await member.roles.remove(role, `Destaff by ${message.author.tag}: ${reason}`);
           removedRoles.push(role.name);
+
+          // duration (if we have tracked it)
+          const since = getStaffRoleSince(message.guild.id, id, roleId);
+          if (since) {
+            removedRoleDurations.push(`${role.name}: ${humanDuration(Date.now() - since)}`);
+          } else {
+            removedRoleDurations.push(`${role.name}: unknown`);
+          }
+
+          clearStaffRoleSince(message.guild.id, id, roleId);
         } catch (e) {
           failedRoles.push(role.name);
+          errors.push(`Failed removing ${role.name}: ${String(e.message || e)}`);
         }
       }
-
-      const caseId = nextDestaffCase();
-      destaffs.cases.push({ caseId, type: shouldBan ? 'DestaffBan' : 'Destaff', user: id, moderator: message.author.id, reason, removedRoles, failedRoles, time: Date.now() });
-      saveJson(DESTAFFS_PATH, destaffs);
 
       let banResult = null;
+      let banGuildUsed = null;
+      const banTargets = [];
+      const banAttempts = [];
       if (shouldBan) {
         try {
-          const user = await client.users.fetch(id).catch(() => null);
-          if (user) {
-            try {
-              await sendModEmbedToUser(user, 'Ban', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
-            } catch (e) {}
+          // Ban in configured guild (can be the same as current guild)
+          let banGuild = null;
+          // 1) By guild ID (preferred)
+          if (DESTAFF_BAN_GUILD_ID && /^\d+$/.test(String(DESTAFF_BAN_GUILD_ID))) {
+            banGuild = client.guilds.cache.get(DESTAFF_BAN_GUILD_ID) || await client.guilds.fetch(DESTAFF_BAN_GUILD_ID).catch(() => null);
           }
-          await message.guild.members.ban(id, { reason: `Destaffban by ${message.author.tag}: ${reason}` });
-          banResult = 'success';
+          // 2) Fallback by guild name (case-insensitive)
+          if (!banGuild && DESTAFF_BAN_GUILD_NAME) {
+            const want = String(DESTAFF_BAN_GUILD_NAME).toLowerCase();
+            banGuild = client.guilds.cache.find(g => String(g.name || '').toLowerCase() === want) || null;
+          }
+
+          // Always ban in the current guild as well
+          const currentGuild = message.guild;
+
+          if (banGuild) banTargets.push(banGuild);
+          if (currentGuild) banTargets.push(currentGuild);
+
+          // Dedupe guild targets
+          const uniqueTargets = new Map();
+          for (const g of banTargets) {
+            if (g && g.id) uniqueTargets.set(g.id, g);
+          }
+          const targets = Array.from(uniqueTargets.values());
+          if (!targets.length) {
+            banResult = 'failed';
+            errors.push(`Ban guild not found (ID: ${DESTAFF_BAN_GUILD_ID || '—'}, Name: ${DESTAFF_BAN_GUILD_NAME || '—'})`);
+          } else {
+            banGuildUsed = banGuild;
+
+            // optional DM (best-effort) - send once
+            try {
+              const user = await client.users.fetch(id).catch(() => null);
+              if (user) {
+                await sendModEmbedToUser(user, 'Ban', { guild: targets[0], moderatorTag: message.author.tag, reason, caseId: null }).catch(() => {});
+              }
+            } catch (e) {}
+
+            for (const g of targets) {
+              try {
+                await g.members.ban(id, { reason: `Destaffban by ${message.author.tag}: ${reason}` });
+                banAttempts.push({ guildId: g.id, guildName: g.name, ok: true });
+              } catch (e) {
+                banAttempts.push({ guildId: g.id, guildName: g.name, ok: false, error: String(e.message || e) });
+                errors.push(`Ban failed in ${g.name} (${g.id}): ${String(e.message || e)}`);
+              }
+            }
+
+            const allOk = banAttempts.length > 0 && banAttempts.every(a => a.ok);
+            banResult = allOk ? 'success' : 'failed';
+          }
         } catch (e) {
           banResult = 'failed';
+          errors.push(`Ban failed: ${String(e.message || e)}`);
         }
       }
 
-      const title = shouldBan ? 'Destaff (Ban)' : 'Destaff';
+      // Store in destaff logs file (no case id in output)
+      try {
+        destaffs.cases.push({
+          type: 'DestaffBan',
+          user: id,
+          moderator: message.author.id,
+          reason,
+          removedRoles,
+          failedRoles,
+          roleDurations: removedRoleDurations,
+          errors,
+          banGuildId: banGuildUsed ? banGuildUsed.id : (DESTAFF_BAN_GUILD_ID || null),
+          banGuildName: banGuildUsed ? banGuildUsed.name : (DESTAFF_BAN_GUILD_NAME || null),
+          banResult,
+          banAttempts,
+          time: Date.now(),
+        });
+        saveJson(DESTAFFS_PATH, destaffs);
+      } catch (e) {
+        errors.push(`Failed writing destaffs.json: ${String(e.message || e)}`);
+      }
+
+      const title = 'Destaff (Ban)';
       const compactRemoved = removedRoles.length ? removedRoles.join(', ').substring(0, 256) : '—';
       const compactFailed = failedRoles.length ? failedRoles.join(', ').substring(0, 256) : '—';
+      const durationPreview = removedRoleDurations.length ? removedRoleDurations.join(' | ').substring(0, 1024) : '—';
+
+      // Success means: bans succeeded (even if there were no staff roles to remove)
+      const ok = shouldBan ? (banResult === 'success') : (failedRoles.length === 0 && errors.length === 0);
+      const replyColor = ok ? 0x2ECC71 : 0xE74C3C;
 
       const embed = new EmbedBuilder()
         .setColor(0x8A2BE2)
         .setTitle(title)
-        .setDescription(`**User:** <@${id}>\n**Case:** #${caseId}`)
+        .setDescription(`**User:** <@${id}>`)
         .addFields(
           { name: 'Moderator', value: `<@${message.author.id}>`, inline: true },
           { name: 'Reason', value: reason.substring(0, 256), inline: true },
           { name: 'Roles removed', value: `${removedRoles.length}`, inline: true },
           { name: 'Roles failed', value: `${failedRoles.length}`, inline: true },
+          { name: 'Role duration', value: durationPreview, inline: false },
           { name: 'Removed (preview)', value: compactRemoved, inline: false },
           { name: 'Failed (preview)', value: compactFailed, inline: false }
         )
@@ -957,7 +1412,21 @@ client.on('messageCreate', async (message) => {
         .setFooter(buildFooter(message.guild));
 
       if (shouldBan) {
-        embed.addFields({ name: 'Ban', value: banResult === 'success' ? '✅ success' : '❌ failed', inline: true });
+        const hubTxt = banGuildUsed ? `${banGuildUsed.name} (${banGuildUsed.id})` : (DESTAFF_BAN_GUILD_ID || DESTAFF_BAN_GUILD_NAME || '—');
+        const currentTxt = message.guild ? `${message.guild.name} (${message.guild.id})` : '—';
+        embed.addFields(
+          { name: 'Ban targets', value: `Hub: ${hubTxt}\nCurrent: ${currentTxt}`.substring(0, 1024), inline: false },
+          { name: 'Ban', value: banResult === 'success' ? '✅ success' : '❌ failed', inline: true }
+        );
+
+        if (banAttempts.length) {
+          const lines = banAttempts.map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})`).join('\n');
+          embed.addFields({ name: 'Ban results', value: lines.substring(0, 1024), inline: false });
+        }
+      }
+
+      if (errors.length) {
+        embed.addFields({ name: 'Errors', value: errors.join('\n').substring(0, 1024), inline: false });
       }
 
       // Send to dedicated destaff log channel
@@ -968,7 +1437,19 @@ client.on('messageCreate', async (message) => {
         console.error('destaff log channel send failed', e);
       }
 
-      await message.reply({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`✅ Destaff gespeichert. Case: #${caseId}`)] }).catch(() => {});
+      // Reply to executor: green if success, else show issues
+      const replyEmbed = new EmbedBuilder()
+        .setColor(replyColor)
+        .setDescription(ok ? '✅ Destaff + Ban erfolgreich.' : '❌ Destaff + Ban fehlgeschlagen.');
+
+      const issueLines = [];
+      if (failedRoles.length) issueLines.push(`Failed roles: ${failedRoles.join(', ')}`);
+      if (errors.length) issueLines.push(...errors);
+      if (issueLines.length) {
+        replyEmbed.addFields({ name: 'Issues', value: issueLines.join('\n').substring(0, 1024), inline: false });
+      }
+
+      await message.reply({ embeds: [replyEmbed] }).catch(() => {});
       return;
     }
 
@@ -1142,24 +1623,8 @@ client.on('messageCreate', async (message) => {
   const [raw, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = raw.toLowerCase();
 
-  // Log executed command to configured log channel
-  try {
-    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-    if (message.guild && cfg.logChannelId) {
-      const logCh = message.guild.channels.cache.get(cfg.logChannelId) || findLogChannel(message.guild);
-      if (logCh && isTextLike(logCh)) {
-        const embed = new EmbedBuilder()
-          .setTitle('Command executed')
-          .setColor(0x3498DB)
-          .addFields(
-            { name: 'User', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-            { name: 'Command', value: `${PREFIX}${command} ${args.join(' ')}`.trim(), inline: true },
-            { name: 'Channel', value: `${message.channel ? message.channel.name : 'DM'}`, inline: true }
-          ).setTimestamp();
-        await sendLog(message.guild, { embeds: [embed] });
-      }
-    }
-  } catch (e) { console.error('command log failed', e); }
+  // Intentionally do not log every command execution (e.g. !say).
+  // Moderation commands create their own dedicated moderation logs.
 
   // Help command: list available commands in the usual embed style
   if (command === 'help' || command === 'h') {
@@ -1173,7 +1638,7 @@ client.on('messageCreate', async (message) => {
       { name: '📋 General', value: '`!help` — Show this help message\n`!say <text>` — Bot repeats your message\n`!rules` — Show server rules', inline: false },
       { name: '🎫 Tickets', value: '`!ticket` — Create a support ticket\n`!close` — Close a ticket (staff only)', inline: false },
       { name: '⚖️ Moderation', value: '`!warn <user> [reason]` — Warn a user\n`!ban <user> [reason]` — Ban a user\n`!unban <id>` — Unban a user\n`!mute <user> <minutes>` — Timeout a user\n`!unmute <user>` — Remove timeout\n`!role <user> <role>` — Assign role to user', inline: false },
-      { name: '📊 Logs & History', value: '`!md <user> [page]` — Show modlogs (8/page)\n`!mds <user> [page]` — Show destaff logs (8/page)', inline: false },
+      { name: '📊 Logs & History', value: '`!md <user> [page]` — Show modlogs (5/page)\n`!mds <user> [page]` — Show destaff logs (8/page)', inline: false },
       { name: '🗑️ Cleanup & Management', value: '`-purg <count> [user]` — Purge messages\n`!del <channel>` — Delete a channel (confirmation required)', inline: false },
       { name: '🚫 Blacklist', value: '`-blacklist <id> [reason]` — Add to blacklist\n`-unbll <id>` — Remove from blacklist\n`-bll` — View blacklist logs', inline: false },
       { name: '👥 Destaff', value: '`-destaff <user> [reason]` — Remove staff roles\n`-destaffban <user> [reason]` — Remove staff roles + ban', inline: false },
@@ -1311,7 +1776,7 @@ client.on('messageCreate', async (message) => {
     const targetId = parseId(userArg) || userArg.replace(/[<@!>]/g, '');
     if (!targetId || !/^\d+$/.test(targetId)) return message.reply('Provide a valid user ID or mention.');
 
-    const itemsPerPage = 8;
+    const itemsPerPage = 5;
     const allCases = modlogs.cases
       .filter(c => String(c.user) === String(targetId))
       .sort((a, b) => (b.time || 0) - (a.time || 0));
@@ -1322,20 +1787,37 @@ client.on('messageCreate', async (message) => {
     const page = Math.max(1, Math.min(totalPages, pageArg));
     const slice = allCases.slice((page - 1) * itemsPerPage, page * itemsPerPage);
 
+    let userTag = targetId;
+    try {
+      const u = await client.users.fetch(targetId).catch(() => null);
+      if (u) userTag = u.tag;
+    } catch (e) {}
+
     const embed = new EmbedBuilder()
-      .setTitle(`Modlogs — ${targetId}`)
+      .setTitle(`Modlogs for ${userTag}`)
       .setColor(0x8A2BE2)
-      .setFooter({ text: `Page ${page}/${totalPages} • Total: ${allCases.length}` })
-      .setTimestamp();
+      .setFooter({ text: `Page ${page}/${totalPages}| Total Logs: ${allCases.length} | ${targetId}` });
 
     for (const c of slice) {
-      const when = c.time ? new Date(c.time).toLocaleString() : 'n/a';
-      const moderator = c.moderator ? `<@${c.moderator}> (${c.moderator})` : 'n/a';
+      const when = c.time ? formatHammertime(c.time) : 'n/a';
+
+      let moderatorLabel = 'Unknown Moderator';
+      if (c.moderator) {
+        try {
+          const mu = await client.users.fetch(String(c.moderator)).catch(() => null);
+          moderatorLabel = mu ? `${mu.tag} (${mu.id})` : `Unknown Moderator (${c.moderator})`;
+        } catch (e) {
+          moderatorLabel = `Unknown Moderator (${c.moderator})`;
+        }
+      }
+
+      const type = c.type || 'Case';
+      const dur = c.durationMs ? ` (${humanDurationLong(c.durationMs)})` : '';
       const reason = c.reason || 'No reason provided';
-      const duration = c.durationMs ? humanDuration(c.durationMs) : '—';
+
       embed.addFields({
-        name: `Case #${c.caseId} — ${c.type || 'Unknown'}`,
-        value: `User: <@${c.user}>\nMod: ${moderator}\nWhen: ${when}\nDuration: ${duration}\nReason: ${reason}`.substring(0, 1024)
+        name: `Case ${c.caseId}`,
+        value: `Type: ${type}${dur}\nModerator: ${moderatorLabel}\nReason: ${reason} - ${when}`.substring(0, 1024)
       });
     }
 
@@ -1430,7 +1912,7 @@ client.on('messageCreate', async (message) => {
       } catch (e) { console.error('failed to send transcript to log channel', e); }
 
       // DM owner
-      try { const owner = await client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
+      try { const owner = await client.users.fetch(ownerId).catch(()=>null); if (owner) await owner.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath].filter(Boolean) }).catch(()=>{}); } catch (e) {}
 
       // remove category and its channels
       try {
@@ -1482,24 +1964,21 @@ client.on('messageCreate', async (message) => {
     // DM the user
     await sendModEmbedToUser(targetUser, 'Warn', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
 
-    const text = `User ${targetUser.tag} (${targetUser.id}) was warned. | ${reason}`;
-    // send to log channel
     try {
-      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-      if (message.guild && cfg.logChannelId) {
-        const logCh = message.guild.channels.cache.get(cfg.logChannelId);
-          if (logCh && isTextLike(logCh)) {
-            const embed = new EmbedBuilder().setTitle('User warned').setColor(0xF1C40F)
-              .addFields(
-                { name: 'User', value: `${targetUser.tag} (${targetUser.id})`, inline: true },
-                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-                { name: 'Reason', value: `${reason}`, inline: false },
-                { name: 'Case ID', value: `${caseId}`, inline: true }
-              ).setTimestamp();
-            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
-          }
-      }
+      const nowTs = Math.floor(Date.now() / 1000);
+      const embed = buildSmallModerationEmbed({
+        title: 'Nutzer verwarnt',
+        targetId: targetUser.id,
+        targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+        moderatorId: message.author.id,
+        reason,
+        caseId,
+        nowTs
+      });
+      await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
     } catch (e) { console.error('warn log failed', e); }
+
+    const text = `User ${targetUser.tag} (${targetUser.id}) was warned. | ${reason}`;
 
     return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
   }
@@ -1524,37 +2003,36 @@ client.on('messageCreate', async (message) => {
     // Ban in guild
     try {
       await message.guild.members.ban(id, { reason: `${message.author.tag}: ${reason}` });
-      // send a copy to the configured log channel (if any)
       try {
-        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-        if (cfg.logChannelId) {
-          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
-          if (logCh && isTextLike(logCh)) {
-            const embed = new EmbedBuilder()
-              .setTitle('User banned')
-              .setColor(0xE74C3C)
-              .addFields(
-                { name: 'User', value: `${id}`, inline: true },
-                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-                { name: 'Reason', value: `${reason}`, inline: false },
-                { name: 'Case ID', value: `${caseId}`, inline: true }
-              ).setTimestamp();
-            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
-          }
-        }
+        const nowTs = Math.floor(Date.now() / 1000);
+        const targetUser = await client.users.fetch(id).catch(() => null);
+        const embed = buildSmallModerationEmbed({
+          title: 'Nutzer gebannt',
+          targetId: id,
+          targetAvatarUrl: targetUser ? targetUser.displayAvatarURL({ extension: 'png', size: 256 }) : null,
+          moderatorId: message.author.id,
+          reason,
+          caseId,
+          nowTs
+        });
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
       } catch (e) { console.error('ban log failed', e); }
 
       const text = `User ${id} was banned. | ${reason}`;
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
     } catch (e) {
       try {
-        const embed = new EmbedBuilder().setTitle('Ban failed').setColor(0xE74C3C)
-          .addFields(
-            { name: 'Target', value: `${id}`, inline: true },
-            { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-            { name: 'Case ID', value: `${caseId}`, inline: true },
-            { name: 'Error', value: `${String(e.message || e)}`, inline: false }
-          ).setTimestamp();
+        const nowTs = Math.floor(Date.now() / 1000);
+        const targetUser = await client.users.fetch(id).catch(() => null);
+        const embed = buildSmallModerationEmbed({
+          title: 'Ban fehlgeschlagen',
+          targetId: id,
+          targetAvatarUrl: targetUser ? targetUser.displayAvatarURL({ extension: 'png', size: 256 }) : null,
+          moderatorId: message.author.id,
+          reason: String(e.message || e),
+          caseId,
+          nowTs
+        });
         await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
       } catch (err) { console.error('ban failure log failed', err); }
       return message.reply('Failed to ban user — maybe invalid ID or lack of permissions.');
@@ -1564,32 +2042,31 @@ client.on('messageCreate', async (message) => {
   if (command === 'unban') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return message.reply('You lack permission to unban members.');
     const id = args[0];
+    const reason = args.slice(1).join(' ').trim() || 'No reason provided';
     if (!id || !/^\d+$/.test(id)) return message.reply('Please provide a valid user ID to unban.');
     try {
-      await message.guild.bans.remove(id, `${message.author.tag}`);
+      await message.guild.bans.remove(id, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Unban', user: id, moderator: message.author.id, reason: 'Unban', time: Date.now() });
+      modlogs.cases.push({ caseId, type: 'Unban', user: id, moderator: message.author.id, reason, time: Date.now() });
       saveJson(MODLOGS_PATH, modlogs);
 
       // DM the user if possible
       const user = await client.users.fetch(id).catch(() => null);
-      if (user) await sendModEmbedToUser(user, 'Unban', { guild: message.guild, moderatorTag: message.author.tag, reason: 'You were unbanned', caseId });
+      if (user) await sendModEmbedToUser(user, 'Unban', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
 
-      // log to configured channel
       try {
-        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-        if (message.guild && cfg.logChannelId) {
-          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
-          if (logCh && isTextLike(logCh)) {
-            const embed = new EmbedBuilder().setTitle('User unbanned').setColor(0x2ECC71)
-              .addFields(
-                { name: 'User', value: `${id}`, inline: true },
-                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-                { name: 'Case ID', value: `${caseId}`, inline: true }
-              ).setTimestamp();
-            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
-          }
-        }
+        const nowTs = Math.floor(Date.now() / 1000);
+        const targetUser = await client.users.fetch(id).catch(() => null);
+        const embed = buildSmallModerationEmbed({
+          title: 'Nutzer entbannt',
+          targetId: id,
+          targetAvatarUrl: targetUser ? targetUser.displayAvatarURL({ extension: 'png', size: 256 }) : null,
+          moderatorId: message.author.id,
+          reason,
+          caseId,
+          nowTs
+        });
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
       } catch (e) { console.error('unban log failed', e); }
 
       const text = `User ${id} was unbanned.`;
@@ -1613,36 +2090,35 @@ client.on('messageCreate', async (message) => {
     const targetArg = args[0];
     const minutesArg = args[1] || '1';
     const minutes = parseInt(minutesArg.replace(/[^0-9]/g, '')) || 1;
+    const reason = args.slice(2).join(' ').trim() || 'No reason provided';
     const duration = minutes * 60 * 1000;
     const member = await message.guild.members.fetch(parseId(targetArg) || targetArg).catch(() => null);
     if (!member) return message.reply('Member not found.');
 
     try {
-      await member.timeout(duration, `${message.author.tag}: mute`);
+      await member.timeout(duration, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Mute', user: member.id, moderator: message.author.id, reason: `Timeout ${minutes}m`, time: Date.now() });
+      modlogs.cases.push({ caseId, type: 'Mute', user: member.id, moderator: message.author.id, reason, durationMs: duration, time: Date.now() });
       saveJson(MODLOGS_PATH, modlogs);
 
       // DM user
-      await sendModEmbedToUser(member.user, 'Mute', { guild: message.guild, moderatorTag: message.author.tag, reason: `Timeout ${minutes} minutes`, caseId });
+      await sendModEmbedToUser(member.user, 'Mute', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId, durationText: `${minutes} minutes` });
 
       const text = `User ${member.user.tag} was muted for ${minutes} minutes.`;
       // log mute
       try {
-        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-        if (message.guild && cfg.logChannelId) {
-          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
-          if (logCh && isTextLike(logCh)) {
-            const embed = new EmbedBuilder().setTitle('User muted').setColor(0xF39C12)
-              .addFields(
-                { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
-                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-                { name: 'Duration', value: `${minutes} minutes`, inline: true },
-                { name: 'Case ID', value: `${caseId}`, inline: true }
-              ).setTimestamp();
-            await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
-          }
-        }
+        const nowTs = Math.floor(Date.now() / 1000);
+        const embed = buildSmallModerationEmbed({
+          title: 'Nutzer getimeoutet',
+          targetId: member.id,
+          targetAvatarUrl: member.user.displayAvatarURL({ extension: 'png', size: 256 }),
+          moderatorId: message.author.id,
+          reason,
+          caseId,
+          durationText: `${minutes} Minuten`,
+          nowTs
+        });
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
       } catch (e) { console.error('mute log failed', e); }
 
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
@@ -1664,32 +2140,31 @@ client.on('messageCreate', async (message) => {
   if (command === 'unmute') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) return message.reply('You lack permission to unmute (remove timeout).');
     const targetArg = args[0];
+    const reason = args.slice(1).join(' ').trim() || 'No reason provided';
     const member = await message.guild.members.fetch(parseId(targetArg) || targetArg).catch(() => null);
     if (!member) return message.reply('Member not found.');
 
     try {
-      await member.timeout(null, `${message.author.tag}: unmute`);
+      await member.timeout(null, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Unmute', user: member.id, moderator: message.author.id, reason: 'Unmute', time: Date.now() });
+      modlogs.cases.push({ caseId, type: 'Unmute', user: member.id, moderator: message.author.id, reason, time: Date.now() });
       saveJson(MODLOGS_PATH, modlogs);
 
-      await sendModEmbedToUser(member.user, 'Unmute', { guild: message.guild, moderatorTag: message.author.tag, reason: 'You were unmuted', caseId });
+      await sendModEmbedToUser(member.user, 'Unmute', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
 
       const text = `User ${member.user.tag} was unmuted.`;
       try {
-        const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-        if (message.guild && cfg.logChannelId) {
-          const logCh = message.guild.channels.cache.get(cfg.logChannelId);
-          if (logCh && isTextLike(logCh)) {
-            const embed = new EmbedBuilder().setTitle('User unmuted').setColor(0x2ECC71)
-              .addFields(
-                { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
-                { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-                { name: 'Case ID', value: `${caseId}`, inline: true }
-              ).setTimestamp();
-            await sendLog(message.guild, { embeds: [embed] });
-          }
-        }
+        const nowTs = Math.floor(Date.now() / 1000);
+        const embed = buildSmallModerationEmbed({
+          title: 'Timeout entfernt',
+          targetId: member.id,
+          targetAvatarUrl: member.user.displayAvatarURL({ extension: 'png', size: 256 }),
+          moderatorId: message.author.id,
+          reason,
+          caseId,
+          nowTs
+        });
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
       } catch (e) { console.error('unmute log failed', e); }
 
       return message.channel.send({ embeds: [createChannelConfirmEmbed(text, caseId)] });
@@ -1707,45 +2182,7 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // Modlogs display: !md or !modlogs <user>
-  if (command === 'md' || command === 'modlogs') {
-    const targetArg = args[0];
-    if (!targetArg) return message.reply('Usage: !md <user mention|id>');
-    const id = parseId(targetArg) || targetArg;
-    if (!id || !/^\d+$/.test(id)) return message.reply('Provide a valid user mention or ID.');
-    // find cases for this user
-    const cases = modlogs.cases.filter(c => String(c.user) === String(id)).slice().sort((a,b)=>b.caseId - a.caseId);
-    let userTag = id;
-    try { const u = await client.users.fetch(id).catch(()=>null); if (u) userTag = `${u.tag}`; } catch(e){}
 
-    const embed = new EmbedBuilder()
-      .setColor(0x8A2BE2)
-      .setTitle(`Modlogs for ${userTag}`)
-      .setTimestamp();
-
-    if (!cases.length) {
-      embed.setDescription('No modlogs found for this user.');
-      return message.channel.send({ embeds: [embed] });
-    }
-
-    // Add up to 25 fields (Discord limit); include case header and details
-    const maxFields = 25;
-    const total = cases.length;
-    const toShow = cases.slice(0, maxFields);
-    toShow.forEach((c) => {
-      const when = formatHammertime(c.time || 0);
-      const moderator = c.moderator ? String(c.moderator) : 'Unknown';
-      const type = c.type || 'Case';
-      const dur = c.durationMs ? ` (${Math.round((c.durationMs||0)/1000)}s)` : '';
-      const name = `Case ${c.caseId} — ${type}${dur}`;
-      const val = `Moderator: ${moderator}\nReason: ${c.reason || '—'}\n${when}`;
-      embed.addFields({ name, value: val });
-    });
-
-    if (total > maxFields) embed.setFooter({ text: `Showing ${maxFields} of ${total} cases` });
-
-    return message.channel.send({ embeds: [embed] });
-  }
 
   // Fun / Christmas commands
   const SANTA_PATH = path.join(DATA_DIR, 'santa_list.json');
@@ -1796,7 +2233,7 @@ client.on('messageCreate', async (message) => {
     const note = args.slice(1).join(' ') || 'Happy Holidays!';
     // DM recipient
     const who = await resolveUser(id).catch(()=>null);
-    const embed = new EmbedBuilder().setColor(0x8A2BE2).setTitle('You received a gift!').addFields({ name: 'Gift', value: gift }, { name: 'Message', value: note });
+    const embed = new EmbedBuilder().setColor(0x87CEFA).setTitle('You received a gift!').addFields({ name: 'Gift', value: gift }, { name: 'Message', value: note });
     if (who) { try { await who.send({ embeds: [embed] }); } catch(e){} }
     return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x8A2BE2).setDescription(`Gave **${gift}** to <@${id}> — ${note}`)] });
   }
@@ -1956,13 +2393,17 @@ client.on('messageCreate', async (message) => {
           if (message.guild && cfg.logChannelId) {
             const logCh = message.guild.channels.cache.get(cfg.logChannelId);
               if (logCh && isTextLike(logCh)) {
-              const embed = new EmbedBuilder().setTitle('Role assigned').setColor(0x8A2BE2)
+              const nowTs = Math.floor(Date.now() / 1000);
+              const embed = new EmbedBuilder().setTitle('Rolle vergeben').setColor(0x87CEFA)
+                .setDescription(`<@${member.id}>`)
+                .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
                 .addFields(
-                  { name: 'Role', value: `${role.name} (${role.id})`, inline: true },
-                  { name: 'User', value: `${member.user.tag} (${member.id})`, inline: true },
-                  { name: 'Moderator', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true }
-                ).setTimestamp();
-              await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
+                  { name: 'ID', value: `${member.id}`, inline: true },
+                  { name: 'Rolle', value: `${role.name}`, inline: true },
+                  { name: 'Moderator', value: `<@${message.author.id}>`, inline: true },
+                  { name: 'Zeit', value: `<t:${nowTs}:R>`, inline: true }
+                );
+              await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
             }
           }
         } catch (e) { console.error('role assign log failed', e); }
@@ -1997,12 +2438,16 @@ console.log(`🔑 Token source: ${source || 'none'}`);
 console.log(`🔎 Token length: ${tokenLen}`);
 console.log(`🕵️ Token preview: ${tokenMasked}`);
 console.log(`📄 .env present: ${DOTENV_PRESENT} (loaded: ${DOTENV_LOADED})`);
-console.log(`🔧 Env vars present: TOKEN=${!!process.env.TOKEN} DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN} GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`);
+console.log(
+  `🔧 Env vars present: TOKEN=${!!process.env.TOKEN} DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN} ` +
+  `DISCORD_BOT_TOKEN=${!!process.env.DISCORD_BOT_TOKEN} BOT_TOKEN=${!!process.env.BOT_TOKEN} ` +
+  `GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`
+);
 
 if (!validateTokenFormat(token)) {
   console.error('❌ Bot token missing or malformed.');
   console.error('Fix options:');
-  console.error('1) Set TOKEN or DISCORD_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on Pterodactyl');
+  console.error('1) Set TOKEN / DISCORD_TOKEN / DISCORD_BOT_TOKEN / BOT_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on your host');
   console.error('2) Upload token.txt (ONLY the token) into the root folder');
   console.error('3) Add { "discordToken": "..." } in config.json (temporary)');
   process.exit(1);
