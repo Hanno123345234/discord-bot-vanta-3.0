@@ -39,6 +39,32 @@ npm start
 	- Otherwise use `DISCORD_TOKEN` (or `TOKEN`).
 - Restart the server after changing Startup variables.
 
+### Quick Deploy Steps
+
+1) **Upload/Clone the repo** into your server (Git option in the panel).
+2) **Install deps** (most Node eggs do this automatically on first start). If not, run: `npm install`.
+3) **Set token in Startup/Environment** (one of these):
+	 - `DISCORD_TOKEN` (preferred)
+	 - `TOKEN`, `DISCORD_BOT_TOKEN`, `BOT_TOKEN`
+	 - If your panel only shows **"GIT ACCESS TOKEN"**, use that (becomes `GIT_ACCESS_TOKEN`).
+4) **Configure channels** in `config.json` (server file manager):
+	 - `welcomeChannelId`, `rulesChannelId`
+	 - `joinLogChannelId`, `leaveLogChannelId`, `messageLogChannelId`
+	 - `moderationLogChannelId` (moderation logs)
+5) **Start/Restart** the server.
+
+### Required Discord Setup
+
+- Enable **Privileged Gateway Intents** in the Discord Developer Portal (Bot settings):
+	- Server Members Intent
+	- Message Content Intent
+- Ensure the bot role has permissions in the target log channels (Send Messages, Embed Links).
+
+### Security Notes
+
+- Never put your bot token into `config.json` and never commit/push `.env`.
+- If a token was ever pasted in chat or leaked, regenerate it in the Developer Portal.
+
 ## 📋 Commands
 
 ### General

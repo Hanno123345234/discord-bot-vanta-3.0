@@ -35,7 +35,27 @@ function resolveToken() {
     }
   }
 
-  // 2) token.txt file (easy to upload on Pterodactyl)
+  // 2) raw .env file fallback (some panels/users paste ONLY the token into .env)
+  try {
+    if (!token) {
+      const envPath = path.join(__dirname, '.env');
+      if (fs.existsSync(envPath)) {
+        const lines = String(fs.readFileSync(envPath, 'utf8'))
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('#'));
+
+        // If the first meaningful line is a raw token (no '='), accept it.
+        const first = lines[0];
+        if (first && !first.includes('=')) {
+          token = first;
+          source = '.env:raw';
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 3) token.txt file (easy to upload on Pterodactyl)
   try {
     if (!token) {
       const tokenFile = path.join(__dirname, 'token.txt');
@@ -46,7 +66,7 @@ function resolveToken() {
     }
   } catch (e) {}
 
-  // 3) config.json field (discouraged, but works)
+  // 4) config.json field (discouraged, but works)
   try {
     if (!token) {
       const cfgPath = path.join(__dirname, 'config.json');
