@@ -15,9 +15,9 @@ try {
 
 // Resolve bot token from multiple sources to avoid env issues on hosts
 function resolveToken() {
-  // 1) Environment variable (preferred) - check multiple common env variable names
-  // Note: Some Pterodactyl eggs expose only a "GIT ACCESS TOKEN" field.
+
   const envCandidates = [
+    { key: 'TOKENSP', val: process.env.TOKENSP },
     { key: 'TOKEN', val: process.env.TOKEN },
     { key: 'DISCORD_TOKEN', val: process.env.DISCORD_TOKEN },
     { key: 'DISCORD_BOT_TOKEN', val: process.env.DISCORD_BOT_TOKEN },
@@ -2448,10 +2448,14 @@ client.on('messageCreate', async (message) => {
 });
 
 // Resolve and validate token before login
-const { token, source } = resolveToken();
-const tokenLen = token ? token.length : 0;
-const tokenMasked = token
-  ? `${String(token).slice(0, 4)}…${String(token).slice(-4)}`
+const { token: resolvedToken, source } = resolveToken();
+
+// Make sure TOKENSP exists for login (compat: if you set TOKEN=... in .env, it still works)
+if (!process.env.TOKENSP && resolvedToken) process.env.TOKENSP = resolvedToken;
+
+const tokenLen = process.env.TOKENSP ? process.env.TOKENSP.length : 0;
+const tokenMasked = process.env.TOKENSP
+  ? `${String(process.env.TOKENSP).slice(0, 4)}…${String(process.env.TOKENSP).slice(-4)}`
   : '(none)';
 
 console.log(`🔑 Token source: ${source || 'none'}`);
@@ -2459,21 +2463,22 @@ console.log(`🔎 Token length: ${tokenLen}`);
 console.log(`🕵️ Token preview: ${tokenMasked}`);
 console.log(`📄 .env present: ${DOTENV_PRESENT} (loaded: ${DOTENV_LOADED})`);
 console.log(
-  `🔧 Env vars present: TOKEN=${!!process.env.TOKEN} DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN} ` +
+  `🔧 Env vars present: TOKENSP=${!!process.env.TOKENSP} TOKEN=${!!process.env.TOKEN} DISCORD_TOKEN=${!!process.env.DISCORD_TOKEN} ` +
   `DISCORD_BOT_TOKEN=${!!process.env.DISCORD_BOT_TOKEN} BOT_TOKEN=${!!process.env.BOT_TOKEN} ` +
   `GIT_ACCESS_TOKEN=${!!process.env.GIT_ACCESS_TOKEN}`
 );
 
-if (!validateTokenFormat(token)) {
+if (!validateTokenFormat(process.env.TOKENSP)) {
   console.error('❌ Bot token missing or malformed.');
   console.error('Fix options:');
-  console.error('1) Set TOKEN / DISCORD_TOKEN / DISCORD_BOT_TOKEN / BOT_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on your host');
+  console.error('1) Set TOKENSP (preferred) or TOKEN / DISCORD_TOKEN / DISCORD_BOT_TOKEN / BOT_TOKEN (or GIT_ACCESS_TOKEN) in Startup/Environment on your host');
   console.error('2) Upload token.txt (ONLY the token) into the root folder');
   console.error('3) Add { "discordToken": "..." } in config.json (temporary)');
   process.exit(1);
 }
 
-client.login(token).catch((e) => {
+// Exactly like your example:
+client.login(process.env.TOKENSP).catch((e) => {
   console.error('❌ Failed to login — token invalid.');
   console.error('Tip: Regenerate the bot token in Discord Developer Portal and update your Startup variable or token.txt.');
   console.error('Error:', e.message);
