@@ -23,5 +23,63 @@
     }
   },
   "transcriptFolder": "transcripts",
-  "maxOpenPerUser": 1
+  "maxOpenPerUser": 1,
+
+  "sessionAnnouncements": {
+    "enabled": true,
+    "targetUserId": "1191442500976640172",
+    "timezone": "Europe/Berlin",
+    "postToChannel": true,
+    "channelPostAt": "12:00",
+    "failLogChannelId": "REPLACE_WITH_LOG_CHANNEL_ID",
+    "excludedWeekdays": [],
+    "tracks": [
+      {
+        "id": "beta",
+        "title": "Beta Sessions Claim",
+        "guildId": "1368527215343435826",
+        "channelId": "1461370702895779945",
+        "sessions": [
+          {
+            "id": "beta_session_1",
+            "sessionStart": "17:00",
+            "sessionEnd": "17:15",
+            "announceAt": "12:00"
+          },
+          {
+            "id": "beta_session_2",
+            "sessionStart": "19:15",
+            "sessionEnd": "19:30",
+            "announceOffsetMinutes": 1
+          },
+          {
+            "id": "beta_session_3",
+            "sessionStart": "21:15",
+            "sessionEnd": "21:30",
+            "announceOffsetMinutes": 1
+          }
+        ]
+      },
+      {
+        "id": "alpha",
+        "title": "Alpha Sessions Claim",
+        "guildId": "1368527215343435826",
+        "channelId": "1461370812639481888",
+        "sessions": [
+          {
+            "id": "alpha_session_1",
+            "sessionStart": "18:00",
+            "sessionEnd": "18:15",
+            "announceAt": "12:00"
+          },
+          {
+            "id": "alpha_session_2",
+            "sessionStart": "20:30",
+            "sessionEnd": "20:45",
+            "announceOffsetMinutes": 1
+          }
+        ]
+      }
+    ]
+  }
 }

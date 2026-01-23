@@ -1,4 +1,4 @@
-const fs = require('fs');
+﻿const fs = require('fs');
 const path = require('path');
 // Load .env into process.env when present (safe if dotenv isn't installed)
 const DOTENV_PATH = path.join(__dirname, '.env');
@@ -135,6 +135,7 @@ const DESTAFF_LOG_CHANNEL_ID = process.env.DESTAFF_LOG_CHANNEL_ID || '1459166993
 const DESTAFF_BAN_GUILD_ID = process.env.DESTAFF_BAN_GUILD_ID || '1459164535112990865';
 const DESTAFF_BAN_GUILD_NAME = process.env.DESTAFF_BAN_GUILD_NAME || 'Staff hub Test server';
 const STAFF_ROLE_HISTORY_PATH = path.join(DATA_DIR, 'staff_role_history.json');
+const SESSIONS_REMINDERS_PATH = path.join(DATA_DIR, 'sessions_reminders.json');
 
 function loadJson(p, fallback) {
   try {
@@ -259,6 +260,123 @@ function nextCase() {
   return modlogs.lastCase;
 }
 
+function parseSessionsClaim(raw) {
+  // Very small parser: accepts mention (<@id>), raw id, or username#discrim
+  if (!raw || typeof raw !== 'string') return null;
+  raw = raw.trim();
+  const m = raw.match(/^<@!?(\d+)>$/);
+  if (m) return { type: 'id', id: m[1] };
+  if (/^\d{6,}$/.test(raw)) return { type: 'id', id: raw };
+  const ud = raw.split('#');
+  if (ud.length === 2) return { type: 'tag', tag: raw };
+  return { type: 'text', text: raw };
+}
+
+function getSessionsCfgByMode(mode, guildId) {
+  // Minimal: read config.json and return a sessions config for the mode
+  try {
+    const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    if (!cfg.sessions) return {};
+    const m = mode ? String(mode) : 'default';
+    const guildOverrides = guildId && cfg.guilds && cfg.guilds[String(guildId)] ? cfg.guilds[String(guildId)].sessions : null;
+    if (guildOverrides && guildOverrides[m]) return guildOverrides[m];
+    return cfg.sessions[m] || cfg.sessions['default'] || {};
+  } catch (e) { return {}; }
+}
+
+async function sendSessionsLog(guild, payload) {
+  try {
+    // Reuse existing logging helper
+    await sendLog(guild, Object.assign({ category: 'sessions' }, payload));
+  } catch (e) { console.error('sendSessionsLog failed', e); }
+}
+
+// --- Session post parsing and reminder scheduling ---
+const scheduledReminderTimeouts = new Map();
+
+function parseSessionMessage(content, referenceDate) {
+  // Parse simple session posts like in screenshots:
+  // lines with `1. 17:00 - 17:15` and following line `Staff: @User` or inline `Staff: @User`
+  const lines = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const sessions = [];
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const timeMatch = line.match(/^(\d+)\.\s*([0-2]?\d:[0-5]\d)\s*(?:-|–|to)\s*([0-2]?\d:[0-5]\d)/i);
+    if (timeMatch) {
+      const idx = parseInt(timeMatch[1], 10);
+      const start = timeMatch[2];
+      const end = timeMatch[3];
+      // look for staff on same line
+      let staff = null;
+      const staffInline = line.match(/staff[:\s]*([\s\S]+)/i);
+      if (staffInline) staff = staffInline[1].trim();
+      else {
+        // look next line
+        const next = lines[i+1];
+        if (next && /staff[:\s]/i.test(next)) {
+          staff = next.replace(/staff[:\s]*/i, '').trim();
+        }
+      }
+      // build Date objects using referenceDate's day
+      const ref = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+      const [sh, sm] = start.split(':').map(Number);
+      const [eh, em] = end.split(':').map(Number);
+      const startDt = new Date(ref);
+      startDt.setHours(sh, sm, 0, 0);
+      const endDt = new Date(ref);
+      endDt.setHours(eh, em, 0, 0);
+      // if end before start, assume next day
+      if (endDt.getTime() <= startDt.getTime()) endDt.setDate(endDt.getDate() + 1);
+      sessions.push({ index: idx, start: startDt.getTime(), end: endDt.getTime(), staff: staff || '' });
+    }
+  }
+  return sessions.sort((a,b)=>a.index-b.index);
+}
+
+function persistReminders(reminders) {
+  try { saveJson(SESSIONS_REMINDERS_PATH, reminders || []); } catch(e){console.error('persistReminders failed', e);} 
+}
+
+function loadPersistedReminders() {
+  try { return loadJson(SESSIONS_REMINDERS_PATH, []); } catch(e) { return []; }
+}
+
+function scheduleReminderObject(rem) {
+  const now = Date.now();
+  const delay = Math.max(0, rem.sendAt - now);
+  if (scheduledReminderTimeouts.has(rem.id)) return; // already scheduled
+  const t = setTimeout(async () => {
+    try {
+      const userId = rem.userId;
+      const content = rem.content;
+      await sendSessionDm(userId, content);
+    } catch (e) { console.error('scheduled reminder send failed', e); }
+    // remove from persisted list
+    try {
+      const all = loadPersistedReminders().filter(r=>r.id !== rem.id);
+      persistReminders(all);
+    } catch (e) {}
+    scheduledReminderTimeouts.delete(rem.id);
+  }, delay);
+  scheduledReminderTimeouts.set(rem.id, t);
+}
+
+function rescheduleAllReminders() {
+  const all = loadPersistedReminders();
+  for (const rem of all) {
+    // only schedule future reminders
+    if (rem.sendAt > Date.now()) scheduleReminderObject(rem);
+    else {
+      // if in past but within 5 minutes, send immediately
+      if (Date.now() - rem.sendAt < 5 * 60 * 1000) {
+        scheduleReminderObject(Object.assign({}, rem, { sendAt: Date.now() + 2000 }));
+      }
+    }
+  }
+}
+
+// session messageCreate handler moved later (after client initialization)
+
 function nextDestaffCase() {
   destaffs.lastCase += 1;
   saveJson(DESTAFFS_PATH, destaffs);
@@ -277,6 +395,59 @@ const client = new Client({
     GatewayIntentBits.DirectMessages
   ],
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.GuildMember]
+});
+
+// sendSessionDm now defined after client to avoid TDZ issues
+async function sendSessionDm(clientOrUserId, content) {
+  try {
+    if (!clientOrUserId) return null;
+    let user = null;
+    if (typeof clientOrUserId === 'string' || typeof clientOrUserId === 'number') {
+      user = await client.users.fetch(String(clientOrUserId)).catch(()=>null);
+    } else if (clientOrUserId && typeof clientOrUserId.send === 'function') {
+      user = clientOrUserId;
+    }
+    if (!user) return null;
+    return user.send(typeof content === 'string' ? { content } : content).catch(()=>null);
+  } catch (e) { console.error('sendSessionDm failed', e); return null; }
+}
+
+// Watch for session posts in the Beta sessions channel and schedule DMs
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message || message.author?.bot) return;
+    const targetChannelId = '1461370702895779945'; // Beta sessions claim channel
+    if (String(message.channel?.id) !== targetChannelId) return;
+
+    const sessions = parseSessionMessage(message.content, message.createdAt);
+    if (!sessions || !sessions.length) return;
+
+    // Send immediate DM for first session to the author
+    const first = sessions[0];
+    const formatSession = (s) => `Session ${s.index}: ${new Date(s.start).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} - ${new Date(s.end).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}\nStaff: ${s.staff || 'Unassigned'}`;
+    const userId = message.author.id;
+    // immediate DM for the first session
+    try { await sendSessionDm(userId, `Deine Session (so sieht sie aus):\n${formatSession(first)}`); } catch (e) { /* ignore */ }
+
+    // Schedule reminders for the rest at 30 minutes before start
+    const reminders = loadPersistedReminders();
+    for (let i = 1; i < sessions.length; i++) {
+      const s = sessions[i];
+      const sendAt = s.start - (30 * 60 * 1000);
+      const now = Date.now();
+      const remId = `sess_${message.id}_${s.index}_${userId}`;
+      const content = `Erinnerung: Session ${s.index} startet um ${new Date(s.start).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})} (Staff: ${s.staff || 'Unassigned'})`;
+      if (sendAt <= now) {
+        // if already within 30 minutes, send immediately
+        await sendSessionDm(userId, content).catch(()=>{});
+      } else {
+        const rem = { id: remId, messageId: message.id, userId, sessionIndex: s.index, sendAt, content };
+        reminders.push(rem);
+        persistReminders(reminders);
+        scheduleReminderObject(rem);
+      }
+    }
+  } catch (e) { console.error('session post handler failed', e); }
 });
 
 function parseId(arg) {
@@ -613,6 +784,8 @@ client.on('ready', () => {
       },
     ],
   });
+  // reschedule session reminders persisted from previous runs
+  try { rescheduleAllReminders(); } catch (e) { console.error('rescheduleAllReminders failed', e); }
 });
 
 // Moderation / audit style event logs: member joins/leaves, voice join/leave, message deletions
@@ -1910,6 +2083,41 @@ client.on('messageCreate', async (message) => {
       .setColor(0x4ECDC4)
       .setTimestamp();
     return message.reply({ embeds: [embed] });
+  }
+
+  // Session announcements (message-based wrappers for /sa and /sb)
+  if (command === 'sa' || command === 'sb' || command === 'shelp' || command === 'beta' || command === 'alpha') {
+    try {
+      const saCmd = require('./commands/sa.js');
+
+      if (command === 'shelp') {
+        return message.reply('Usage: !sa <regHH:MM> <gameHH:MM> [mode=beta|alpha] — Use !sb for beta-only (shortcut).');
+      }
+
+      // Map aliases
+      const mode = command === 'sb' ? 'beta' : (command === 'alpha' ? 'alpha' : (args[2] ? String(args[2]).toLowerCase() : 'beta'));
+      const regRaw = args[0];
+      const gameRaw = args[1];
+      if (!regRaw || !gameRaw) return message.reply('Usage: !sa <regHH:MM> <gameHH:MM> [mode]');
+
+      const reg = saCmd.parseHHMM(regRaw);
+      const game = saCmd.parseHHMM(gameRaw);
+      if (!reg) return message.reply('Invalid `reg` time. Use `HH:MM`.');
+      if (!game) return message.reply('Invalid `game` time. Use `HH:MM`.');
+
+      const now = new Date();
+      const regTs = saCmd.resolveNextTimestampSeconds(reg.hh, reg.mm, now);
+      let gameTs = saCmd.resolveNextTimestampSeconds(game.hh, game.mm, now);
+      if (gameTs <= regTs) gameTs = gameTs + 86400;
+
+      const content = saCmd.buildAnnouncement({ mode, regTs, gameTs, staffMentions: '@staff', includeEveryone: false });
+      const sent = await message.channel.send({ content, allowedMentions: { parse: ['roles', 'users'], roles: [], users: [] } }).catch(()=>null);
+      if (!sent) return message.reply('Konnte die Ankündigung nicht senden (fehlende Berechtigung?).');
+      return message.reply(`✅ Posted: ${sent.url}`);
+    } catch (e) {
+      console.error('session command failed', e);
+      return message.reply('Fehler beim Ausführen des Session-Befehls.');
+    }
   }
 
   // Rate command

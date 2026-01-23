@@ -1,0 +1,2 @@
+const fs=require('fs');const path=require('path');const s=fs.readFileSync(path.join(__dirname,'index.js'),'utf8');const lines=s.split('\n');const upto=1680;const stack=[];for(let i=0;i<upto;i++){const line=lines[i];for(let j=0;j<line.length;j++){const ch=line[j];if(ch==='('){stack.push({line:i+1,col:j+1})}else if(ch===')'){stack.pop()}}}
+fs.writeFileSync(path.join(__dirname,'diag_unmatched_parens.json'), JSON.stringify({unmatched:stack.slice(-10)},null,2));console.log('wrote diag_unmatched_parens.json');

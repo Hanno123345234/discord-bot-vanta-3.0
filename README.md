@@ -51,6 +51,7 @@ npm start
 - `!help` — Show all commands
 - `!say <text>` — Bot repeats message
 - `!rules` — Display server rules
+- `!dash` — Open CYBRANCEE panel link
 
 ### Moderation
 - `!warn <user> [reason]` — Warn a user

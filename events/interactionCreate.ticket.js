@@ -40,6 +40,20 @@ module.exports = {
         const cmd = require(path.join(__dirname, '..', 'commands', 'admin.js'));
         return cmd.execute(interaction, config);
       }
+      if (interaction.commandName === 'sa') {
+        const cmd = require(path.join(__dirname, '..', 'commands', 'sa.js'));
+        return cmd.execute(interaction, config);
+      }
+
+      // Fallback: respond to any registered-but-unhandled slash command so it doesn't time out.
+      try {
+        if (!interaction.deferred && !interaction.replied) {
+          await interaction.reply({
+            content: `This command (/${interaction.commandName}) is not supported by this bot version. Please redeploy slash commands or use a supported command.`,
+            ephemeral: true,
+          });
+        }
+      } catch (e) {}
       return;
     }
 

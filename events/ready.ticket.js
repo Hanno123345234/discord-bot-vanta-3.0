@@ -23,7 +23,8 @@ module.exports = {
       // - Global registration can take up to ~1 hour to show up.
       const ticketCmd = require(path.join(DATA_DIR, 'commands', 'ticket.js'));
       const adminCmd = require(path.join(DATA_DIR, 'commands', 'admin.js'));
-      const slashCommands = [ticketCmd.data, adminCmd.data];
+      const saCmd = require(path.join(DATA_DIR, 'commands', 'sa.js'));
+      const slashCommands = [ticketCmd.data, adminCmd.data, saCmd.data];
       const testGuildId = process.env.TEST_GUILD_ID || config.testGuildId || null;
 
       async function upsertGuildSlashCommands(guild) {
