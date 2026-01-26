@@ -386,7 +386,8 @@ const sendSessionsLog = (...args) => sendSessionsLogWrapper(...args);
 async function sendMessageLogWrapper(payload) {
   try {
     const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
-    const chId = process.env.MESSAGE_LOG_CHANNEL_ID || cfg.messageLogChannelId;
+    // Prefer explicit env var, then config keys `messageLogChannelId`, then legacy `logChannelId`.
+    const chId = process.env.MESSAGE_LOG_CHANNEL_ID || cfg.messageLogChannelId || cfg.logChannelId || process.env.LOG_CHANNEL_ID;
     if (!chId) return;
     let ch = client.channels.cache.get(chId) || await client.channels.fetch(chId).catch(()=>null);
     if (!ch) return;
