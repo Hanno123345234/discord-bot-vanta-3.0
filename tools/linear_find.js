@@ -1,0 +1,1 @@
+const fs=require('fs'),vm=require('vm');const lines=fs.readFileSync('index.js','utf8').split('\n');for(let i=1;i<=lines.length;i++){const code=lines.slice(0,i).join('\n');try{new vm.Script(code);}catch(e){console.log('fail at line',i,e.message);process.exit(0);} }console.log('no failure');

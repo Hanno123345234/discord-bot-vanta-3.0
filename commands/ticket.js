@@ -12,7 +12,7 @@ module.exports = {
     const embed = new EmbedBuilder()
       .setTitle('Support Tickets')
       .setDescription('Wähle den Ticket-Typ aus, um ein Ticket zu öffnen.')
-      .setColor(0x8A2BE2);
+      .setColor(0x87CEFA);
 
     const menu = new StringSelectMenuBuilder()
       .setCustomId('ticket_create')
@@ -25,14 +25,18 @@ module.exports = {
 
     const row = new ActionRowBuilder().addComponents(menu);
 
-    await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
+    try {
+      await interaction.reply({ embeds: [embed], components: [row], ephemeral: false });
+    } catch (err) {
+      console.warn('ticket command reply failed', err && err.code ? `${err.code} ${err.message}` : err);
+    }
 
     // log to configured log channel if present
     try {
       if (interaction.guild) {
         await sendLog(interaction.guild, { embeds: [
           new EmbedBuilder()
-            .setColor(0x00AAFF)
+            .setColor(0x87CEFA)
             .setTitle('Ticket-Menü gesendet')
             .setDescription(`Ticket-Menü gesendet von <@${interaction.user.id}> in ${interaction.channel ? (interaction.channel.name || interaction.channel.id) : 'DM'}`)
         ] });

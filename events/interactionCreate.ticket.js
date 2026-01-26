@@ -36,6 +36,21 @@ module.exports = {
         const cmd = require(path.join(__dirname, '..', 'commands', 'ticket.js'));
         return cmd.execute(interaction, config);
       }
+      // support /create here as a fallback to ensure the modal is shown
+      if (interaction.commandName === 'create') {
+        try {
+          const modal = new ModalBuilder().setCustomId('create_modal').setTitle('Paste session announcement');
+          const input = new TextInputBuilder().setCustomId('announcement_text').setLabel('Announcement').setStyle(TextInputStyle.Paragraph).setRequired(true).setPlaceholder('Paste the full announcement here...').setMinLength(10).setMaxLength(4000);
+          const row = new ActionRowBuilder().addComponents(input);
+          modal.addComponents(row);
+          await interaction.showModal(modal);
+        } catch (e) {
+          console.error('ticket interaction create modal failed', e);
+          try { await interaction.reply({ content: 'Fehler beim Öffnen des Modals.', ephemeral: true }); } catch (e) {}
+        }
+        return;
+      }
+      // session is handled centrally in index.js now
       if (interaction.commandName === 'admin') {
         const cmd = require(path.join(__dirname, '..', 'commands', 'admin.js'));
         return cmd.execute(interaction, config);
@@ -45,15 +60,8 @@ module.exports = {
         return cmd.execute(interaction, config);
       }
 
-      // Fallback: respond to any registered-but-unhandled slash command so it doesn't time out.
-      try {
-        if (!interaction.deferred && !interaction.replied) {
-          await interaction.reply({
-            content: `This command (/${interaction.commandName}) is not supported by this bot version. Please redeploy slash commands or use a supported command.`,
-            ephemeral: true,
-          });
-        }
-      } catch (e) {}
+      // Do not auto-reply for unhandled chat input commands here.
+      // Let other handlers (possibly consolidated in index.js) process the interaction.
       return;
     }
 
@@ -63,13 +71,19 @@ module.exports = {
       try {
         const type = interaction.values[0] || 'support';
         const guild = interaction.guild;
-        if (!guild) return interaction.editReply('Dieses Menü kann nur auf einem Server verwendet werden.');
+        if (!guild) {
+          const e = new EmbedBuilder().setColor(0x87CEFA).setDescription('This menu can only be used on a server.');
+          return interaction.editReply({ embeds: [e] });
+        }
 
         const maxOpen = config.maxOpenPerUser || 1;
         const userId = interaction.user.id;
         // find existing tickets by topic convention ticket:<userId>:
         const existing = guild.channels.cache.find(c => c.topic && c.topic.startsWith(`ticket:${userId}:`));
-        if (existing) return interaction.editReply('Du hast bereits ein offenes Ticket. Bitte schließe es zuerst.');
+        if (existing) {
+          const e = new EmbedBuilder().setColor(0x87CEFA).setDescription('You already have an open ticket. Please close it first.');
+          return interaction.editReply({ embeds: [e] });
+        }
 
         // category: accept a real snowflake, otherwise ignore placeholder and fallback by name/create
         let categoryId = config.ticketCategoryId || null;
@@ -98,26 +112,27 @@ module.exports = {
         const channel = await guild.channels.create({ name: channelName, type: 0, parent: categoryId || undefined, permissionOverwrites: overwrites, topic: `ticket:${userId}:${type}` });
 
         const embed = new EmbedBuilder()
-          .setTitle('Neues Ticket')
-          .setDescription(`Ticket von <@${userId}> — Typ: **${type}**`) 
-          .setColor(0x8A2BE2)
-          .addFields({ name: 'Hinweis', value: 'Staff wird sich so schnell wie möglich darum kümmern. Benutze den Button unten, um das Ticket zu schließen.' });
+          .setTitle('New Ticket')
+          .setDescription(`Ticket from <@${userId}> — Type: **${type}**`)
+          .setColor(0x87CEFA)
+          .addFields([{ name: 'Note', value: 'Staff will handle this as soon as possible. Use the button below to close the ticket.' }]);
 
         const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
-        const row = new ActionRowBuilder().addComponents(closeBtn);
+        const claimBtn = new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Primary);
+        const row = new ActionRowBuilder().addComponents(claimBtn, closeBtn);
 
         await channel.send({ content: `<@${userId}>`, embeds: [embed], components: [row] });
 
         // notify user
-        await interaction.editReply({ content: `Dein Ticket wurde erstellt: ${channel}`, ephemeral: true });
+        await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Your ticket was created: ${channel}`)], ephemeral: true });
         // log creation
-        try {
-          await sendLog(guild, { embeds: [new EmbedBuilder().setColor(0x00AAFF).setTitle('Ticket erstellt').setDescription(`Ticket ${channel} erstellt von <@${userId}> Typ: ${type}`)] });
+          try {
+          await sendLog(guild, { embeds: [new EmbedBuilder().setColor(0x87CEFA).setTitle('Ticket created').setDescription(`Ticket ${channel} created by <@${userId}> Type: ${type}`)] });
         } catch (e) { console.error('ticket log send failed', e); }
 
-      } catch (e) {
+          } catch (e) {
         console.error('ticket create failed', e);
-        try { await interaction.editReply('Fehler beim Erstellen des Tickets.'); } catch {};
+        try { await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Failed to create the ticket.')] }); } catch {};
       }
       return;
     }
@@ -127,7 +142,7 @@ module.exports = {
       await interaction.deferReply({ ephemeral: true });
       try {
         const channel = interaction.channel;
-        if (!channel || !channel.topic || !channel.topic.startsWith('ticket:')) return interaction.editReply('Dieses Knopf kann nur in Ticket-Kanälen verwendet werden.');
+        if (!channel || !channel.topic || !channel.topic.startsWith('ticket:')) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('This button can only be used in ticket channels.')] });
         const parts = channel.topic.split(':');
         const ownerId = parts[1];
         const type = parts[2] || 'support';
@@ -135,23 +150,93 @@ module.exports = {
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
         const isOwner = interaction.user.id === ownerId;
         const isStaff = member ? (staffId && member.roles.cache.has(staffId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
-        if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
+        if (!isOwner && !isStaff) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Only the creator or staff can close the ticket.')] });
 
         // show modal to collect reason
-        const modal = new ModalBuilder().setCustomId(`ticket_confirm_close:${channel.id}`).setTitle('Ticket schließen');
-        const input = new TextInputBuilder().setCustomId('close_reason').setLabel('Grund (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('Kurze Notiz warum geschlossen wird');
+        const modal = new ModalBuilder().setCustomId(`ticket_confirm_close:${channel.id}`).setTitle('Close Ticket');
+        const input = new TextInputBuilder().setCustomId('close_reason').setLabel('Reason (optional)').setStyle(TextInputStyle.Paragraph).setRequired(false).setPlaceholder('Short note why closing');
         const row = new ActionRowBuilder().addComponents(input);
         modal.addComponents(row);
         // log that a close modal is about to be shown (close requested)
         try {
-          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0xFFAA00).setTitle('Ticket-Schließung angefragt').setDescription(`Schließung angefragt für ${channel.name} von <@${interaction.user.id}>`)] });
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0xFFAA00).setTitle('Ticket close requested').setDescription(`Close requested for ${channel.name} by <@${interaction.user.id}>`)] });
         } catch (e) { console.error('ticket close modal log failed', e); }
 
         await interaction.showModal(modal);
         return;
       } catch (e) {
         console.error('ticket close button failed', e);
-        return interaction.editReply('Fehler beim Starten des Schließvorgangs.');
+        return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Failed to start the close process.')] });
+      }
+    }
+
+    // Handle claim button
+    if (interaction.isButton() && interaction.customId === 'ticket_claim') {
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const channel = interaction.channel;
+        if (!channel || !channel.topic || !channel.topic.startsWith('ticket:')) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('This button can only be used in ticket channels.')] });
+        const parts = channel.topic.split(':');
+        const ownerId = parts[1];
+        const type = parts[2] || 'support';
+        const claimedBy = parts[3] || null;
+
+        const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
+        const isStaff = member ? (staffId && member.roles.cache.has(staffId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
+        if (!isStaff) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Only staff can claim tickets.')] });
+
+        if (claimedBy) {
+          if (claimedBy === interaction.user.id) {
+            // Unclaim
+            channel.setTopic(`ticket:${ownerId}:${type}`);
+            const embed = new EmbedBuilder()
+              .setTitle('Ticket unclaimed')
+              .setDescription(`Ticket from <@${ownerId}> — Type: **${type}**\nNo longer claimed.`)
+              .setColor(0x87CEFA)
+              .addFields([{ name: 'Note', value: 'Staff will handle this as soon as possible. Use the button below to close the ticket.' }]);
+
+            const claimBtn = new ButtonBuilder().setCustomId('ticket_claim').setLabel('Claim Ticket').setStyle(ButtonStyle.Primary);
+            const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
+            const row = new ActionRowBuilder().addComponents(claimBtn, closeBtn);
+
+            await channel.messages.fetch({ limit: 1 }).then(messages => {
+              const msg = messages.first();
+              if (msg && msg.embeds.length > 0) msg.edit({ embeds: [embed], components: [row] });
+            });
+
+            await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Ticket unclaimed.')] });
+            try {
+              await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0xFFFF00).setTitle('Ticket unclaimed').setDescription(`Ticket ${channel.name} unclaimed von <@${interaction.user.id}>`)] });
+            } catch (e) {}
+          } else {
+            return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('This ticket has already been claimed by someone else.')] });
+          }
+        } else {
+          // Claim
+          channel.setTopic(`ticket:${ownerId}:${type}:${interaction.user.id}`);
+          const embed = new EmbedBuilder()
+            .setTitle('Ticket claimed')
+            .setDescription(`Ticket von <@${ownerId}> — Typ: **${type}**\nClaimed von <@${interaction.user.id}>`)
+            .setColor(0x00FF00)
+            .addFields([{ name: 'Hinweis', value: 'Staff wird sich so schnell wie möglich darum kümmern. Benutze den Button unten, um das Ticket zu schließen.' }]);
+
+          const unclaimBtn = new ButtonBuilder().setCustomId('ticket_claim').setLabel('Unclaim Ticket').setStyle(ButtonStyle.Secondary);
+          const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
+          const row = new ActionRowBuilder().addComponents(unclaimBtn, closeBtn);
+
+          await channel.messages.fetch({ limit: 1 }).then(messages => {
+            const msg = messages.first();
+            if (msg && msg.embeds.length > 0) msg.edit({ embeds: [embed], components: [row] });
+          });
+
+          await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Ticket claimed.')] });
+          try {
+            await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setColor(0x00FF00).setTitle('Ticket claimed').setDescription(`Ticket ${channel.name} claimed von <@${interaction.user.id}>`)] });
+          } catch (e) {}
+        }
+      } catch (e) {
+        console.error('ticket claim button failed', e);
+        return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Failed to claim the ticket.')] });
       }
     }
 
@@ -161,18 +246,18 @@ module.exports = {
       try {
         const channelId = interaction.customId.split(':')[1];
         const channel = interaction.guild.channels.cache.get(channelId) || interaction.channel;
-        if (!channel) return interaction.editReply('Ticket-Kanal nicht gefunden.');
+        if (!channel) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Ticket channel not found.')] });
         const reason = interaction.fields.getTextInputValue('close_reason') || 'Kein Grund angegeben';
 
         // permission check again
         const topic = channel.topic || '';
-        if (!topic.startsWith('ticket:')) return interaction.editReply('Kein Ticket-Kanal.');
+        if (!topic.startsWith('ticket:')) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Not a ticket channel.')] });
         const ownerId = topic.split(':')[1];
 
         const member = await interaction.guild.members.fetch(interaction.user.id).catch(()=>null);
         const isOwner = interaction.user.id === ownerId;
         const isStaff = member ? (staffId && member.roles.cache.has(staffId)) || member.permissions.has(PermissionsBitField.Flags.ManageGuild) : false;
-        if (!isOwner && !isStaff) return interaction.editReply('Nur der Ersteller oder Staff kann das Ticket schließen.');
+        if (!isOwner && !isStaff) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Only the creator or staff can close the ticket.')] });
 
         // create transcript
         const base = path.resolve(__dirname, '..');
@@ -182,14 +267,14 @@ module.exports = {
 
         // send transcript to log channel if configured
         try {
-          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)], files: [txtPath, htmlPath].filter(Boolean) });
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket closed').setDescription(`Ticket ${channel.name} closed by <@${interaction.user.id}>\nReason: ${reason}`)], files: [txtPath, htmlPath].filter(Boolean) });
         } catch (e) { console.error('failed to send transcript to log channel', e); }
 
         // DM owner with transcript
         try {
           const owner = await interaction.client.users.fetch(ownerId).catch(()=>null);
-          if (owner) {
-            await owner.send({ embeds: [new EmbedBuilder().setTitle('Dein Ticket wurde geschlossen').setDescription(`Grund: ${reason}`)], files: [txtPath] }).catch(()=>{});
+            if (owner) {
+            await owner.send({ embeds: [new EmbedBuilder().setTitle('Your ticket has been closed').setDescription(`Reason: ${reason}`)], files: [txtPath] }).catch(()=>{});
           }
         } catch (e) {}
 
@@ -199,11 +284,11 @@ module.exports = {
           try { await channel.delete().catch(()=>{}); } catch (e) { console.error('failed to delete ticket channel', e); }
         } catch (e) { console.error('failed to remove ticket', e); }
 
-        try { await interaction.editReply({ content: 'Ticket geschlossen, Transkript erstellt und Kanal/Kategorie gelöscht.' }); } catch(e) {}
+        try { await interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Ticket closed, transcript created and channel removed.')] }); } catch(e) {}
         return;
       } catch (e) {
         console.error('modal submit close failed', e);
-        return interaction.editReply('Fehler beim Schließen des Tickets.');
+        return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Failed to close the ticket.')] });
       }
     }
   }

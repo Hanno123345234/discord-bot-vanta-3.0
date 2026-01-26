@@ -64,7 +64,7 @@ module.exports = {
 
     // Safety: require ManageRoles in the guild where command is used
     if (!interaction.memberPermissions || !interaction.memberPermissions.has(PermissionsBitField.Flags.ManageRoles)) {
-      return interaction.editReply('Du hast keine Berechtigung, Admin-Rollen zu vergeben.');
+      return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Du hast keine Berechtigung, Admin-Rollen zu vergeben.')] });
     }
 
     // Targets: same server list as blacklist
@@ -125,7 +125,7 @@ module.exports = {
 
     const embed = new EmbedBuilder()
       .setTitle('Admin Role Sync')
-      .setColor(0x8A2BE2)
+      .setColor(0x87CEFA)
       .setDescription(`User: <@${target.id}> (${target.id})`)
       .addFields(
         { name: 'Moderator', value: `<@${interaction.user.id}>`, inline: true },
@@ -139,7 +139,7 @@ module.exports = {
       .map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})${a.ok ? ` — ${a.roleName || 'role'} (${a.roleId || ''})` : ` — ${String(a.error || 'failed').substring(0, 80)}`}`)
       .join('\n');
 
-    embed.addFields({ name: 'Results', value: lines.substring(0, 1024), inline: false });
+    embed.addFields([{ name: 'Results', value: lines.substring(0, 1024), inline: false }]);
 
     return interaction.editReply({ embeds: [embed] });
   },

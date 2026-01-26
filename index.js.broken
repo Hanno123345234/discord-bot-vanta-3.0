@@ -1,0 +1,132 @@
+const fs = require('fs');
+const path = require('path');
+// Load .env into process.env when present (safe if dotenv isn't installed)
+const DOTENV_PATH = path.join(__dirname, '.env');
+let DOTENV_PRESENT = false;
+let DOTENV_LOADED = false;
+try { DOTENV_PRESENT = fs.existsSync(DOTENV_PATH); } catch (e) { DOTENV_PRESENT = false; }
+try { 
+  require('dotenv').config({ path: path.join(__dirname, '.env') }); 
+  console.log('✅ .env file loaded');
+  DOTENV_LOADED = true;
+} catch (e) { 
+  console.warn('⚠️ dotenv not available or .env not found');
+};
+function resolveToken() {
+
+  const sanitizeTokenString = (raw) => {
+    if (typeof raw !== 'string') return undefined;
+    let v = raw.trim();
+    if (!v) return undefined;
+    v = v.replace(/^['"]|['"]$/g, '');
+    v = v.replace(/^(bot|bearer)\s+/i, '').trim();
+    return v || undefined;
+  };
+
+  const looksLikeDiscordToken = (raw) => {
+    const v = sanitizeTokenString(raw);
+    if (!v) return false;
+    const parts = v.split('.');
+    return parts.length === 3 && v.length >= 50;
+  };
+
+  const envCandidates = [
+    { key: 'TOKENSP', val: process.env.TOKENSP },
+    { key: 'TOKEN', val: process.env.TOKEN },
+    { key: 'DISCORD_TOKEN', val: process.env.DISCORD_TOKEN },
+    { key: 'DISCORD_BOT_TOKEN', val: process.env.DISCORD_BOT_TOKEN },
+    { key: 'BOT_TOKEN', val: process.env.BOT_TOKEN },
+    { key: 'GIT_ACCESS_TOKEN', val: process.env.GIT_ACCESS_TOKEN },
+  ];
+
+  let token;
+  let source;
+  const ignored = [];
+  for (const c of envCandidates) {
+    const v = sanitizeTokenString(c.val);
+    if (!v) continue;
+    if (looksLikeDiscordToken(v)) {
+      token = v;
+      source = `env:${c.key}`;
+      break;
+    }
+    ignored.push(`${c.key}(len=${v.length}, parts=${v.split('.').length})`);
+  }
+
+  // 2) raw .env file fallback (some panels/users paste ONLY the token into .env)
+  try {
+    if (!token) {
+      const envPath = path.join(__dirname, '.env');
+      if (fs.existsSync(envPath)) {
+        const lines = String(fs.readFileSync(envPath, 'utf8'))
+          .split(/\r?\n/)
+          .map(l => l.trim())
+          .filter(l => l && !l.startsWith('#'));
+
+        // If the first meaningful line is a raw token (no '='), accept it.
+        const first = lines[0];
+        if (first && !first.includes('=') && looksLikeDiscordToken(first)) {
+          token = sanitizeTokenString(first);
+          source = '.env:raw';
+        }
+      }
+    }
+  } catch (e) {}
+
+  // 3) token.txt file (easy to upload on Pterodactyl)
+  try {
+    if (!token) {
+      const tokenFile = path.join(__dirname, 'token.txt');
+      if (fs.existsSync(tokenFile)) {
+        const raw = fs.readFileSync(tokenFile, 'utf8');
+        if (looksLikeDiscordToken(raw)) token = sanitizeTokenString(raw);
+        source = 'token.txt';
+      }
+    }
+  } catch (e) {}
+
+  // 4) config.json field (discouraged, but works)
+  try {
+    if (!token) {
+      const cfgPath = path.join(__dirname, 'config.json');
+      if (fs.existsSync(cfgPath)) {
+        const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+        if (cfg && typeof cfg.discordToken === 'string' && cfg.discordToken.trim()) {
+          if (looksLikeDiscordToken(cfg.discordToken)) {
+            token = sanitizeTokenString(cfg.discordToken);
+            source = 'config.json';
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return { token, source, ignored };
+
+}
+ 
+
+function validateTokenFormat(t) {
+  if (!t || typeof t !== 'string') return false;
+  const parts = t.split('.');
+  // Discord tokens are usually 3 parts separated by dots
+  if (parts.length !== 3) return false;
+  // Basic length check to catch empty/short values
+  return t.length >= 50;
+}
+
+const { Client, GatewayIntentBits } = require('discord.js');
+
+const { token: resolvedToken, source } = resolveToken();
+const token = resolvedToken;
+
+if (!validateTokenFormat(token)) {
+  console.error('Bot token missing or malformed.');
+  process.exit(1);
+}
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+client.once('ready', () => console.log('Client ready'));
+client.login(token).catch(e => { console.error('Login failed', e && e.message); process.exit(1); });
+
+// Original file backed up as index.js.broken

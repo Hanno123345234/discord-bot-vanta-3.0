@@ -24,7 +24,12 @@ module.exports = {
       const ticketCmd = require(path.join(DATA_DIR, 'commands', 'ticket.js'));
       const adminCmd = require(path.join(DATA_DIR, 'commands', 'admin.js'));
       const saCmd = require(path.join(DATA_DIR, 'commands', 'sa.js'));
-      const slashCommands = [ticketCmd.data, adminCmd.data, saCmd.data];
+      // session command (creates Duo Practice Session announcements)
+      let sessionCmd = null;
+      try { sessionCmd = require(path.join(DATA_DIR, 'commands', 'session.js')); } catch (e) { /* ignore if missing */ }
+      let createCmd = null;
+      try { createCmd = require(path.join(DATA_DIR, 'commands', 'create.js')); } catch (e) { /* ignore */ }
+      const slashCommands = [ticketCmd.data, adminCmd.data, saCmd.data].concat(sessionCmd && sessionCmd.data ? [sessionCmd.data] : []).concat(createCmd && createCmd.data ? [createCmd.data] : []);
       const testGuildId = process.env.TEST_GUILD_ID || config.testGuildId || null;
 
       async function upsertGuildSlashCommands(guild) {
@@ -93,21 +98,21 @@ module.exports = {
             const { EmbedBuilder, ActionRowBuilder, StringSelectMenuBuilder } = require('discord.js');
             const embed = new EmbedBuilder()
               .setTitle('Support Tickets')
-              .setDescription('Wähle den Ticket-Typ aus, um ein Ticket zu öffnen.')
+              .setDescription('Choose a ticket type to open a ticket.')
               .setColor(0x8A2BE2);
 
             const menu = new StringSelectMenuBuilder()
               .setCustomId('ticket_create')
-              .setPlaceholder('Wähle einen Ticket-Typ')
+              .setPlaceholder('Choose a ticket type')
               .addOptions([
-                { label: 'Support', value: 'support', description: 'Allgemeine Hilfe', emoji: '🛠️' },
-                { label: 'Bug', value: 'bug', description: 'Fehler melden', emoji: '🐛' },
-                { label: 'Bewerbung', value: 'apply', description: 'Bewerbung einreichen', emoji: '💼' }
+                { label: 'Support', value: 'support', description: 'General help', emoji: '🛠️' },
+                { label: 'Bug', value: 'bug', description: 'Report a bug', emoji: '🐛' },
+                { label: 'Application', value: 'apply', description: 'Submit an application', emoji: '💼' }
               ]);
 
             const row = new ActionRowBuilder().addComponents(menu);
             const pingRoleId = process.env.TICKET_PING_ROLE || config.pingRoleId || '1344391422954176634';
-            const content = `Bitte erstelle ein Ticket, indem du unten den Typ auswählst. <@&${pingRoleId}>`;
+            const content = `Please create a ticket by selecting a type below. <@&${pingRoleId}>`;
             await ch.send({ content, embeds: [embed], components: [row], allowedMentions: { roles: [String(pingRoleId)] } }).catch((err) => console.error('Failed to send ticket announcement (send):', err));
             console.log(`Ticket announcement sent to channel ${announceChannelId}.`);
           } else {

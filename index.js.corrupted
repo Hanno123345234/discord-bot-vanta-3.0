@@ -1,0 +1,47 @@
+﻿// Minimal syntactically-correct starter for Vanta Bot workspace.
+// The original file was backed up as index.js.broken in the repo root.
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config();
+const { Client, GatewayIntentBits } = require('discord.js');
+
+function resolveTokenSimple() {
+  const envToken = process.env.TOKEN || process.env.DISCORD_TOKEN || process.env.BOT_TOKEN || process.env.TOKENSP || process.env.DISCORD_BOT_TOKEN;
+  if (envToken && typeof envToken === 'string' && envToken.trim()) return envToken.trim();
+  try {
+    const t = fs.readFileSync(path.join(__dirname, 'token.txt'), 'utf8').trim();
+    if (t) return t;
+  } catch (e) {
+    // ignore
+  }
+  return null;
+}
+
+function validateTokenFormat(t) { return !!t && typeof t === 'string' && t.split('.').length >= 2 && t.length >= 30; }
+
+const token = resolveTokenSimple();
+if (!validateTokenFormat(token)) {
+  console.error('Bot token missing or malformed. Set TOKEN env var or token.txt');
+  // Exit with non-zero so CI / checks notice
+  process.exit(1);
+}
+
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+client.once('ready', () => console.log(Logged in as ));
+client.on('error', (err) => console.error('Discord client error', err));
+
+// Minimal ping handler so the bot is responsive without the full original logic.
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message || !message.content) return;
+    if (message.author?.bot) return;
+    if (message.content === '!ping') return message.reply('pong');
+  } catch (e) {
+    console.error('messageCreate handler error', e);
+  }
+});
+
+client.login(token).catch(e => { console.error('Login failed', e && e.message); process.exit(1); });
+
+// Export client for tests or other tools that might equire this file.
+module.exports = { client };
