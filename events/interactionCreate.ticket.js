@@ -46,7 +46,7 @@ module.exports = {
           await interaction.showModal(modal);
         } catch (e) {
           console.error('ticket interaction create modal failed', e);
-          try { await interaction.reply({ content: 'Fehler beim Öffnen des Modals.', ephemeral: true }); } catch (e) {}
+          try { await interaction.reply({ content: 'Failed to open the modal.', ephemeral: true }); } catch (e) {}
         }
         return;
       }
@@ -218,7 +218,7 @@ module.exports = {
             .setTitle('Ticket claimed')
             .setDescription(`Ticket von <@${ownerId}> — Typ: **${type}**\nClaimed von <@${interaction.user.id}>`)
             .setColor(0x00FF00)
-            .addFields([{ name: 'Hinweis', value: 'Staff wird sich so schnell wie möglich darum kümmern. Benutze den Button unten, um das Ticket zu schließen.' }]);
+            .addFields([{ name: 'Note', value: 'Staff will address this as soon as possible. Use the button below to close the ticket.' }]);
 
           const unclaimBtn = new ButtonBuilder().setCustomId('ticket_claim').setLabel('Unclaim Ticket').setStyle(ButtonStyle.Secondary);
           const closeBtn = new ButtonBuilder().setCustomId('ticket_close').setLabel('Close Ticket').setStyle(ButtonStyle.Danger);
@@ -280,7 +280,7 @@ module.exports = {
 
         // remove ticket: delete only this ticket channel (keep shared category)
         try {
-          try { await channel.send({ embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Dieses Ticket wurde geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] }).catch(()=>{}); } catch(e) {}
+          try { await channel.send({ embeds: [new EmbedBuilder().setTitle('Ticket closed').setDescription(`This ticket was closed by <@${interaction.user.id}>\nReason: ${reason}`)] }).catch(()=>{}); } catch(e) {}
           try { await channel.delete().catch(()=>{}); } catch (e) { console.error('failed to delete ticket channel', e); }
         } catch (e) { console.error('failed to remove ticket', e); }
 

@@ -19,7 +19,7 @@ module.exports = {
       .setPlaceholder('Wähle einen Ticket-Typ')
       .addOptions([
         { label: 'Support', value: 'support', description: 'Allgemeine Hilfe', emoji: '🛠️' },
-        { label: 'Bug', value: 'bug', description: 'Fehler melden', emoji: '🐛' },
+        { label: 'Bug', value: 'bug', description: 'Report bug', emoji: '🐛' },
         { label: 'Bewerbung', value: 'apply', description: 'Bewerbung einreichen', emoji: '💼' }
       ]);
 

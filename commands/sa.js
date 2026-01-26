@@ -168,7 +168,7 @@ module.exports = {
     const row = new ActionRowBuilder().addComponents(select);
 
     await interaction.editReply({
-      content: 'Wähle die Staff-Mitglieder, die im Announcement erwähnt werden sollen (oder überspringen für @staff):',
+      content: 'Select the staff members to mention in the announcement (or skip to mention @staff):',
       components: [row],
       ephemeral: true,
     });

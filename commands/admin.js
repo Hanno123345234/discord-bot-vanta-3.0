@@ -64,7 +64,7 @@ module.exports = {
 
     // Safety: require ManageRoles in the guild where command is used
     if (!interaction.memberPermissions || !interaction.memberPermissions.has(PermissionsBitField.Flags.ManageRoles)) {
-      return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Du hast keine Berechtigung, Admin-Rollen zu vergeben.')] });
+      return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('You do not have permission to assign admin roles.')] });
     }
 
     // Targets: same server list as blacklist

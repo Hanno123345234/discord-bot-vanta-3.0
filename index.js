@@ -1105,25 +1105,7 @@ client.on('messageCreate', async (message) => {
         .addFields({ name: 'Staff', value: s.staff || 'Unassigned' })
         .setTimestamp();
 
-      // immediate send for the first session
-      if (i === 0) {
-        for (const rid of recipients) {
-          try {
-            const sent = await sendSessionDm(rid, { embeds: [dm] });
-            if (!sent) {
-              try {
-                try { const emb = new EmbedBuilder().setTitle('Failed to deliver session DM').setColor(0xFF6B6B).addFields({ name: 'User', value: `<@${rid}>`, inline: true }, { name: 'Channel', value: `<#${message.channel.id}>`, inline: true }, { name: 'Session', value: `${s.index}`, inline: true }, { name: 'Note', value: 'User may have DMs disabled or is unreachable.' }) .setTimestamp(); await sendSessionsLog({ embeds: [emb] }); await sendMessageLog(emb); } catch (e) { console.error('failed to log failed DM', e); }
-              } catch (ee) { console.error('failed to log DM failure', ee); }
-              // fallback: mention in the announcement channel so staff see it
-              try {
-                if (message && message.channel && typeof message.channel.send === 'function') {
-                  await message.channel.send(`<@${rid}> I couldn't DM you. Reminder: Session ${s.index} starts at <t:${Math.floor(s.start/1000)}:t>.`);
-                }
-              } catch (eee) { console.error('failed to send in-channel fallback (author)', eee); }
-            }
-          } catch (e) { /* ignore per-user failures */ }
-        }
-      }
+      // do not special-case the first session; handle all sessions uniformly below
 
       // schedule reminders for sessions after the first (or also for first if requested)
       const sendAt = s.start - (REMINDER_MINUTES * 60 * 1000);
@@ -1132,24 +1114,19 @@ client.on('messageCreate', async (message) => {
         const remId = `sess_${message.id}_${s.index}_${rid}`;
         const content = `Reminder: Session ${s.index} at <t:${Math.floor(s.start/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`;
         if (sendAt <= now) {
-          // within reminder window -> send now
-          // Avoid duplicate send for the first session: we already sent an immediate DM above
-          if (i === 0) {
-            // skip: first session already received an immediate DM; do not send the reminder copy
-          } else {
-            try {
-              const sent = await sendSessionDm(rid, content);
-              if (!sent) {
-                try { const emb = new EmbedBuilder().setTitle('Failed to deliver session DM (immediate)').setColor(0xFF6B6B).addFields({ name: 'User', value: `<@${rid}>`, inline: true }, { name: 'Channel', value: `<#${message.channel.id}>`, inline: true }, { name: 'Session', value: `${s.index}`, inline: true }) .setTimestamp(); await sendSessionsLog({ embeds: [emb] }); await sendMessageLog(emb); } catch (ee) { console.error('failed to log immediate DM failure', ee); }
-                // fallback: mention in the announcement channel so staff see it
-                try {
-                  if (message && message.channel && typeof message.channel.send === 'function') {
-                    await message.channel.send(`<@${rid}> I couldn't DM you. Reminder: Session ${s.index} starts at <t:${Math.floor(s.start/1000)}:t>.`);
-                  }
-                } catch (eee) { console.error('failed to send in-channel fallback (immediate)', eee); }
-              }
-            } catch (e) {}
-          }
+          // within reminder window -> send now (use embed for consistency)
+          try {
+            const sent = await sendSessionDm(rid, { embeds: [dm] });
+            if (!sent) {
+              try { const emb = new EmbedBuilder().setTitle('Failed to deliver session DM (immediate)').setColor(0xFF6B6B).addFields({ name: 'User', value: `<@${rid}>`, inline: true }, { name: 'Channel', value: `<#${message.channel.id}>`, inline: true }, { name: 'Session', value: `${s.index}`, inline: true }) .setTimestamp(); await sendSessionsLog({ embeds: [emb] }); await sendMessageLog(emb); } catch (ee) { console.error('failed to log immediate DM failure', ee); }
+              // fallback: mention in the announcement channel so staff see it
+              try {
+                if (message && message.channel && typeof message.channel.send === 'function') {
+                  await message.channel.send(`<@${rid}> I couldn't DM you. Reminder: Session ${s.index} starts at <t:${Math.floor(s.start/1000)}:t>.`);
+                }
+              } catch (eee) { console.error('failed to send in-channel fallback (immediate)', eee); }
+            }
+          } catch (e) { console.error('failed to send immediate session reminder', e); }
         } else {
           const rem = { id: remId, messageId: message.id, channelId: message.channel.id, userId: rid, sessionIndex: s.index, sendAt, content };
           if (sqliteDb) sqlitePersistReminder(rem);
@@ -1559,7 +1536,7 @@ client.on('interactionCreate', async (interaction) => {
       } catch (e) {
         console.error('session announce button failed', e);
         try {
-          await interaction.editReply({ content: 'Fehler beim Ankünden der Session.', ephemeral: true });
+          await interaction.editReply({ content: 'Failed to announce the session.', ephemeral: true });
         } catch (err) {}
       }
     }
@@ -1735,10 +1712,10 @@ client.on('interactionCreate', async (interaction) => {
           } catch (e) { console.error('admin_purge_json failed', e); return interaction.editReply({ content: 'Failed to delete JSON reminders.', ephemeral: true }); }
         }
 
-        if (action === 'admin_close') {
+            if (action === 'admin_close') {
           try {
             if (interaction.message && interaction.message.deletable) await interaction.message.delete().catch(()=>{});
-            return interaction.editReply({ content: 'Panel entfernt.', ephemeral: true });
+            return interaction.editReply({ content: 'Panel removed.', ephemeral: true });
           } catch (e) { console.error('admin_close failed', e); return interaction.editReply({ content: 'Failed to remove the panel.', ephemeral: true }); }
         }
 
@@ -1766,7 +1743,7 @@ client.on('interactionCreate', async (interaction) => {
         const existing = interaction.guild.channels.cache.filter(c => c.topic && c.topic.startsWith(`ticket:${targetUserId}:`));
         if (existing.size >= maxOpen) {
           const first = existing.first();
-          return interaction.editReply(first ? `Du hast bereits ein offenes Ticket: ${first}` : 'Du hast bereits ein offenes Ticket.');
+          return interaction.editReply(first ? `You already have an open ticket: ${first}` : 'You already have an open ticket.');
         }
 
         // Resolve staff role id from config: accept raw id, mention, or role name
@@ -1842,9 +1819,9 @@ client.on('interactionCreate', async (interaction) => {
 
         const embed = new EmbedBuilder()
           .setTitle('🎫 Support Ticket')
-          .setDescription(`Ticket von <@${targetUserId}>\nBitte beschreibe dein Anliegen so genau wie möglich.`)
+          .setDescription(`Ticket from <@${targetUserId}>\nPlease describe your issue as clearly as possible.`)
           .setColor(0x8A2BE2)
-          .addFields({ name: 'Schließen', value: 'Staff kann das Ticket mit dem Button unten schließen.', inline: false })
+          .addFields({ name: 'Close', value: 'Staff can close the ticket with the button below.', inline: false })
           .setTimestamp();
 
           const closeBtn = new ButtonBuilder()
@@ -1894,7 +1871,7 @@ client.on('interactionCreate', async (interaction) => {
 
         // try send transcript to log channel
         try {
-          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)], files: [txtPath].filter(Boolean) });
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket closed').setDescription(`Ticket ${channel.name} closed by <@${interaction.user.id}>\nReason: ${reason}`)], files: [txtPath].filter(Boolean) });
         } catch (e) { console.error('ticket log send failed', e); }
 
         // DM owner
@@ -1906,7 +1883,7 @@ client.on('interactionCreate', async (interaction) => {
         } catch (e) { console.error('failed to remove ticket channels/category', e); }
 
         try {
-          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket geschlossen').setDescription(`Ticket ${channel.name} geschlossen von <@${interaction.user.id}>\nGrund: ${reason}`)] });
+          await sendLog(interaction.guild, { embeds: [new EmbedBuilder().setTitle('Ticket closed').setDescription(`Ticket ${channel.name} closed by <@${interaction.user.id}>\nReason: ${reason}`)] });
         } catch (e) { console.error('ticket log send failed', e); }
 
         return interaction.editReply('Ticket closed and removed.');
@@ -2274,7 +2251,7 @@ client.on('guildMemberAdd', async (member) => {
       if (joinLogCh && isTextLike(joinLogCh)) {
         const createdTs = Math.floor(member.user.createdTimestamp / 1000);
         const joinLogEmbed = new EmbedBuilder()
-          .setTitle('Mitglied beigetreten')
+          .setTitle('Member joined')
           .setDescription(`<@${member.id}>`)
           .setColor(0x87CEFA)
           .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
@@ -2355,7 +2332,7 @@ client.on('guildMemberRemove', async (member) => {
         const nowTs = Math.floor(Date.now() / 1000);
         const targetUser = member.user;
         const embed = buildSmallModerationEmbed({
-          title: 'Mitglied gekickt',
+          title: 'Member kicked',
           targetId: member.id,
           targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
           moderatorId: kickEntry.executor ? kickEntry.executor.id : null,
@@ -2399,7 +2376,7 @@ client.on('guildMemberRemove', async (member) => {
       if (leaveLogCh && isTextLike(leaveLogCh)) {
         const createdTs = Math.floor(member.user.createdTimestamp / 1000);
         const leaveLogEmbed = new EmbedBuilder()
-          .setTitle('Mitglied verlassen')
+          .setTitle('Member left')
           .setDescription(`<@${member.id}>`)
           .setColor(0x87CEFA)
           .setThumbnail(member.user.displayAvatarURL({ extension: 'png', size: 256 }))
@@ -2717,7 +2694,7 @@ client.on('messageCreate', async (message) => {
           || member.permissions.has(PermissionsBitField.Flags.ManageGuild)
         : false;
 
-      if (!isStaff) return replyAsEmbed(message, 'Du hast keine Berechtigung, dieses Kommando zu nutzen.');
+      if (!isStaff) return replyAsEmbed(message, 'You do not have permission to use this command.');
 
       const parts = raw.split(/\s+/);
       const targetArg = parts[1];
@@ -2821,12 +2798,12 @@ client.on('messageCreate', async (message) => {
 
       // check open tickets for this user
       const existing = message.guild.channels.cache.filter(c => c.topic && c.topic.startsWith(`ticket:${userId}:`));
-      if (existing.size >= maxOpen) return replyAsEmbed(message, 'Du hast bereits ein offenes Ticket. Bitte schließe es zuerst.');
+      if (existing.size >= maxOpen) return replyAsEmbed(message, 'You already have an open ticket. Please close it first.');
 
       // Send a professional ticket panel with a button (user can create their private ticket)
       const panelEmbed = new EmbedBuilder()
         .setTitle('🎫 Support Tickets')
-        .setDescription('Klicke auf **Create Ticket**, um ein privates Ticket zu eröffnen.\nEin Staff-Mitglied wird dir so schnell wie möglich helfen.')
+        .setDescription('Click **Create Ticket** to open a private ticket.\nA staff member will assist you as soon as possible.')
         .setColor(0x8A2BE2)
         .setTimestamp()
         .setFooter(buildFooter(message.guild));
@@ -3077,7 +3054,7 @@ client.on('messageCreate', async (message) => {
     }
 
     if (cmd.toLowerCase() === 'destaff' || cmd.toLowerCase() === 'destaffban') {
-      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return replyAsEmbed(message, 'Du hast keine Berechtigung, Nutzer zu destaffen.');
+      if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) return replyAsEmbed(message, 'You do not have permission to remove staff roles from users.');
       const id = parseId(rest[0]) || rest[0];
       const reason = rest.slice(1).join(' ') || 'Kein Grund angegeben';
       if (!id || !/^\d+$/.test(id)) return replyAsEmbed(message, 'Bitte gib eine gültige User-ID oder Mention an.');
