@@ -1,0 +1,1 @@
+const fs=require('fs');const s=fs.readFileSync('index.js','utf8');const backticks=(s.match(/`/g)||[]).length;const dq=(s.match(/"/g)||[]).length;const sq=(s.match(/'/g)||[]).length;console.log('backticks',backticks,'doubleQuotes',dq,'singleQuotes',sq);

@@ -131,6 +131,7 @@ module.exports = {
             createdAt: new Date(),
             react: async () => {}
           };
+          fakeMsg._isSeed = true;
           // emit so index.js handler treats it the same as a posted announcement
           interaction.client.emit('messageCreate', fakeMsg);
         } catch (e) {}
@@ -196,7 +197,8 @@ module.exports = {
           content,
           channel: ch,
           createdAt: new Date(),
-          react: async () => {}
+          react: async () => {},
+          _isSeed: true
         };
         try {
           interaction.client.emit('messageCreate', fakeMsg);

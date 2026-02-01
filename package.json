@@ -3,6 +3,7 @@
   "version": "2.0.0",
   "description": "Professional Discord moderation bot for CYBRANCEE server",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js",
     "install-service": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\install_vantabot_nssm.ps1",
