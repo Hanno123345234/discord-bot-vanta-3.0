@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { createTranscript } = require('../utils/transcript');
 const { sendLog } = require('../utils/logger');
+let voiceActivity = null;
+try { voiceActivity = require('../utils/voice_activity'); } catch (e) { voiceActivity = null; }
 
 function loadConfig() {
   const base = path.resolve(__dirname, '..');
@@ -17,6 +19,27 @@ module.exports = {
   name: 'interactionCreate.ticket',
   async execute(interaction) {
     const config = loadConfig();
+
+    // Voice Activity buttons: edit the existing message
+    try {
+      if (interaction.isButton && interaction.isButton()) {
+        const id = String(interaction.customId || '');
+        if (id === 'va_refresh' || id.startsWith('va_range:')) {
+          if (!voiceActivity) {
+            try { return interaction.reply({ content: 'Voice activity module is not available on this deployment.', ephemeral: true }); } catch (e0) {}
+            return;
+          }
+          const range = id === 'va_refresh' ? '7d' : (id.split(':')[1] || '7d');
+          const normalized = voiceActivity.normalizeRange(range);
+          const embed = await voiceActivity.buildVoiceActivityEmbed(interaction.guild, { range: normalized, viewerId: interaction.user.id });
+          const components = voiceActivity.buildVoiceActivityComponents(normalized);
+          return interaction.update({ embeds: [embed], components });
+        }
+      }
+    } catch (e) {
+      console.error('voice activity button failed', e);
+      try { return interaction.reply({ content: 'Failed to update voice activity.', ephemeral: true }); } catch (e2) {}
+    }
 
     // resolve staff role id from config: accept raw id, mention, or role name
     function resolveRoleId(guild, raw) {
@@ -57,6 +80,10 @@ module.exports = {
       }
       if (interaction.commandName === 'sa') {
         const cmd = require(path.join(__dirname, '..', 'commands', 'sa.js'));
+        return cmd.execute(interaction, config);
+      }
+      if (interaction.commandName === 'voiceactivity') {
+        const cmd = require(path.join(__dirname, '..', 'commands', 'voiceactivity.js'));
         return cmd.execute(interaction, config);
       }
 

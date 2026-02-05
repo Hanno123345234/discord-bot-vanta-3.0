@@ -1,5 +1,29 @@
 ﻿const fs = require('fs');
 const path = require('path');
+let voiceActivity = null;
+try {
+  voiceActivity = require('./utils/voice_activity');
+} catch (e) {
+  console.warn('⚠️ Missing ./utils/voice_activity; voice activity features disabled.');
+  voiceActivity = {
+    disabled: true,
+    VOICE_ACTIVITY_PATH: null,
+    normalizeRange: (r) => String(r || '7d').toLowerCase(),
+    buildVoiceActivityComponents: () => [],
+    buildVoiceActivityEmbed: async () => {
+      try {
+        const { EmbedBuilder } = require('discord.js');
+        return new EmbedBuilder()
+          .setTitle('Voice Activity')
+          .setDescription('Voice activity module is not deployed on this host.');
+      } catch {
+        return null;
+      }
+    },
+    seedFromClient: () => {},
+    handleVoiceStateUpdate: () => {},
+  };
+}
 // Load .env into process.env when present (safe if dotenv isn't installed)
 const DOTENV_PATH = path.join(__dirname, '.env');
 let DOTENV_PRESENT = false;
@@ -13,18 +37,7 @@ try {
   console.warn('⚠️ dotenv not available or .env not found');
 };
 
-process.on('exit', (code) => {
-  try { console.log('== DEBUG: process.exit with code', code); } catch (e) {}
-});
-
-// Override process.exit temporarily to log stack traces when exit is invoked
-try {
-  const _origExit = process.exit.bind(process);
-  process.exit = function(code) {
-    try { console.error('== DEBUG: process.exit called with', code); console.error(new Error('exit_stack').stack); } catch (e) {}
-    return _origExit(code);
-  };
-} catch (e) {}
+// (debug exit logging removed)
 
 function resolveToken() {
 
@@ -167,13 +180,29 @@ const SESSIONS_WATCH_PATH = path.join(DATA_DIR, 'sessions_watch.json');
 const SQLITE_DB_PATH = path.join(DATA_DIR, 'vanta_bot.sqlite');
 const SESSIONS_CLAIMS_PATH = path.join(DATA_DIR, 'sessions_claims.json');
 const SESSIONS_POSTS_PATH = path.join(DATA_DIR, 'sessions_posts.json');
+const VOICE_CREATE_PATH = path.join(DATA_DIR, 'voice_create.json');
 
 // Streams/watchers storage
 const STREAMS_PATH = path.join(DATA_DIR, 'streams.json');
 
+// Fixed log channels (can be overridden via env or config.json per guild)
+const DEFAULT_BOT_UPDATES_CHANNEL_ID = process.env.BOT_UPDATES_CHANNEL_ID || '1467999140633120768';
+const DEFAULT_SERVER_LOGS_CHANNEL_ID = process.env.SERVER_LOGS_CHANNEL_ID || '1467999947856281610';
+
 // Recent send dedupe cache: key -> timestamp (ms)
 const recentSendCache = new Map();
 const RECENT_SEND_WINDOW_MS = 5000; // skip duplicate sends within 5 seconds
+
+// Prevent duplicate log sends for the same event
+function shouldSkipLogOnce(key, windowMs = RECENT_SEND_WINDOW_MS) {
+  try {
+    const now = Date.now();
+    const prev = recentSendCache.get(key) || 0;
+    if (now - prev < windowMs) return true;
+    recentSendCache.set(key, now);
+    return false;
+  } catch (e) { return false; }
+}
 
 
 function loadStreams() {
@@ -222,7 +251,154 @@ function loadJson(p, fallback) {
   }
 }
 function saveJson(p, obj) {
-  fs.writeFileSync(p, JSON.stringify(obj, null, 2), 'utf8');
+  try {
+    const json = JSON.stringify(obj, null, 2);
+    // Atomic-ish write: write temp file, then rename into place.
+    // This reduces the chance of truncated JSON if the process dies mid-write.
+    const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
+    fs.writeFileSync(tmp, json, 'utf8');
+    try {
+      fs.renameSync(tmp, p);
+    } catch (e) {
+      // Fallback: direct write (e.g. on cross-device rename / permission oddities)
+      try { fs.writeFileSync(p, json, 'utf8'); } catch (e2) { throw e2; }
+      try { fs.unlinkSync(tmp); } catch (e3) {}
+    }
+    return true;
+  } catch (e) {
+    console.error('Failed to save JSON', p, e);
+    return false;
+  }
+}
+
+function reloadModlogs() {
+  try {
+    const loaded = loadJson(MODLOGS_PATH, { lastCase: 10000, cases: [] });
+    if (!loaded || typeof loaded !== 'object') return (modlogs = { lastCase: 10000, cases: [] });
+    if (typeof loaded.lastCase !== 'number') loaded.lastCase = 10000;
+    if (!Array.isArray(loaded.cases)) loaded.cases = [];
+    modlogs = loaded;
+    return modlogs;
+  } catch (e) {
+    return modlogs;
+  }
+}
+
+// --- Join-to-create voice channels ----------------------------------------
+let voiceCreateState = loadJson(VOICE_CREATE_PATH, { channels: {} });
+if (!voiceCreateState || typeof voiceCreateState !== 'object') voiceCreateState = { channels: {} };
+if (!voiceCreateState.channels || typeof voiceCreateState.channels !== 'object') voiceCreateState.channels = {};
+
+function saveVoiceCreateState() {
+  try { saveJson(VOICE_CREATE_PATH, voiceCreateState); } catch (e) {}
+}
+
+function sanitizeVoiceChannelName(raw) {
+  try {
+    let name = String(raw || '').trim();
+    if (!name) name = 'voice';
+    // Discord channel name max is 100; keep a little headroom.
+    if (name.length > 90) name = name.substring(0, 90).trim();
+    return name;
+  } catch (e) {
+    return 'voice';
+  }
+}
+
+function getVoiceCreateCfg(guildId) {
+  const cfg = loadGuildConfig(guildId);
+  const triggerChannelId = process.env.VOICE_CREATE_TRIGGER_CHANNEL_ID || cfg.voiceCreateTriggerChannelId || cfg.voice_create_trigger_channel_id || null;
+  const categoryId = process.env.VOICE_CREATE_CATEGORY_ID || cfg.voiceCreateCategoryId || cfg.voice_create_category_id || null;
+  const enabledEnv = process.env.VOICE_CREATE_ENABLED;
+  const enabledCfg = (cfg.voiceCreateEnabled !== undefined) ? !!cfg.voiceCreateEnabled : undefined;
+  const enabled = (enabledEnv !== undefined)
+    ? !['0','false','no','off'].includes(String(enabledEnv).toLowerCase())
+    : (enabledCfg !== undefined ? enabledCfg : true);
+  const deleteWhenEmptyEnv = process.env.VOICE_CREATE_DELETE_WHEN_EMPTY;
+  const deleteWhenEmpty = (deleteWhenEmptyEnv !== undefined)
+    ? !['0','false','no','off'].includes(String(deleteWhenEmptyEnv).toLowerCase())
+    : (cfg.voiceCreateDeleteWhenEmpty !== undefined ? !!cfg.voiceCreateDeleteWhenEmpty : true);
+  const nameMode = (cfg.voiceCreateNameMode || process.env.VOICE_CREATE_NAME_MODE || 'displayName');
+  const namePrefix = (cfg.voiceCreateNamePrefix || process.env.VOICE_CREATE_NAME_PREFIX || '').toString();
+
+  return {
+    enabled: !!enabled,
+    triggerChannelId: triggerChannelId ? String(triggerChannelId) : null,
+    categoryId: categoryId ? String(categoryId) : null,
+    deleteWhenEmpty: !!deleteWhenEmpty,
+    nameMode: String(nameMode || 'displayName'),
+    namePrefix,
+  };
+}
+
+async function maybeDeleteCreatedVoiceChannel(channel) {
+  try {
+    if (!channel || !channel.id) return false;
+    const meta = voiceCreateState.channels[String(channel.id)];
+    if (!meta) return false;
+    const guildId = meta.guildId ? String(meta.guildId) : null;
+    const cfg = getVoiceCreateCfg(guildId);
+    if (!cfg.deleteWhenEmpty) return false;
+
+    const nonBot = channel.members ? Array.from(channel.members.values()).filter(m => m && m.user && !m.user.bot).length : 0;
+    if (nonBot > 0) return false;
+
+    try { await channel.delete('Join-to-create voice: channel empty'); } catch (e) {}
+    delete voiceCreateState.channels[String(channel.id)];
+    saveVoiceCreateState();
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function handleJoinToCreateVoice(oldState, newState) {
+  try {
+    const guild = newState.guild;
+    if (!guild) return false;
+    if (!newState.member || !newState.member.user) return false;
+    const cfg = getVoiceCreateCfg(guild.id);
+    if (!cfg.enabled) return false;
+    if (!cfg.triggerChannelId) return false;
+
+    // Only when joining the trigger channel
+    if (!newState.channelId) return false;
+    if (String(newState.channelId) !== String(cfg.triggerChannelId)) return false;
+    if (oldState && oldState.channelId && String(oldState.channelId) === String(newState.channelId)) return false;
+
+    const triggerChannel = newState.channel;
+    if (!triggerChannel) return false;
+
+    // Resolve category: config override else inherit trigger channel parent
+    const parentId = cfg.categoryId || triggerChannel.parentId || null;
+
+    const baseName = (cfg.nameMode.toLowerCase() === 'username')
+      ? (newState.member.user.username || newState.member.user.tag || newState.member.id)
+      : (newState.member.displayName || newState.member.user.username || newState.member.user.tag || newState.member.id);
+    const name = sanitizeVoiceChannelName(`${cfg.namePrefix || ''}${baseName}`);
+
+    const created = await guild.channels.create({
+      name,
+      type: ChannelType.GuildVoice,
+      parent: parentId,
+      reason: `Join-to-create voice for ${newState.member.user.tag} (${newState.id})`
+    });
+
+    // Persist mapping so *dcase-like admin actions and restarts can still clean up
+    voiceCreateState.channels[String(created.id)] = {
+      guildId: String(guild.id),
+      ownerId: String(newState.id),
+      triggerChannelId: String(cfg.triggerChannelId),
+      createdAt: Date.now(),
+    };
+    saveVoiceCreateState();
+
+    // Move member into created channel
+    try { await newState.setChannel(created, 'Join-to-create voice: move user'); } catch (e) {}
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function loadWatchChannels(guildId) {
@@ -235,6 +411,17 @@ function loadWatchChannels(guildId) {
       const gid = String(guildId || '');
       if (gid && all[gid] && Array.isArray(all[gid])) for (const c of all[gid]) set.add(String(c));
     }
+    // Also include channels configured in config.json sessionAnnouncements tracks
+    try {
+      const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
+      const tracks = cfg && cfg.sessionAnnouncements && Array.isArray(cfg.sessionAnnouncements.tracks)
+        ? cfg.sessionAnnouncements.tracks
+        : [];
+      for (const t of tracks) {
+        if (!t) continue;
+        if (t.channelId) set.add(String(t.channelId));
+      }
+    } catch (e) {}
     return set;
   } catch (e) { return new Set(['1461370812639481888', '1461370702895779945']); }
 }
@@ -289,6 +476,35 @@ function appendActionMd(guild, moderatorTag, title, details) {
     fs.appendFileSync(mdPath, entry, 'utf8');
   } catch (e) {
     console.error('Failed to write actions.md', e);
+  }
+}
+
+// Modlogs-style MD writer for modlog/blacklist actions
+function appendModlogsMdEntry({ title, userId, type, moderatorId, reason, caseId, whenTs, guild }) {
+  try {
+    const mdPath = path.join(DATA_DIR, 'actions.md');
+    const now = new Date().toISOString();
+    const guildInfo = guild ? `${guild.name} (${guild.id})` : 'Direct Message';
+    const when = whenTs ? formatHammertime(whenTs) : formatHammertime(Date.now());
+    const modLine = moderatorId
+      ? (/^\d+$/.test(String(moderatorId)) ? `<@${moderatorId}> (${moderatorId})` : String(moderatorId))
+      : 'Unknown';
+    const reasonLine = reason ? String(reason) : '—';
+
+    const entry = [
+      `## ${title} — ${now}`,
+      `- Server: ${guildInfo}`,
+      `- User: ${userId ? (/^\d+$/.test(String(userId)) ? `<@${userId}> (${userId})` : String(userId)) : 'Unknown'}`,
+      `- Type: ${type || 'Unknown'}`,
+      `- Moderator: ${modLine}`,
+      `- Case: ${caseId ?? 'n/a'}`,
+      `- Reason: ${reasonLine} - ${when}`,
+      '',
+    ].join('\n');
+
+    fs.appendFileSync(mdPath, entry, 'utf8');
+  } catch (e) {
+    console.error('Failed to write modlog-style actions.md', e);
   }
 }
 
@@ -378,12 +594,99 @@ function loadAutomodConfig() {
 }
 
 const AUTOMOD_CONFIG = loadAutomodConfig();
-console.log('== DEBUG: loaded AUTOMOD_CONFIG');
 
 function nextCase() {
+  // Keep modlogs in sync with disk so admin commands and multi-instance runs behave predictably.
+  reloadModlogs();
   modlogs.lastCase += 1;
   saveJson(MODLOGS_PATH, modlogs);
   return modlogs.lastCase;
+}
+
+// Unified modlog helpers: store in modlogs.json + write to actions.md
+const RECENT_MOD_ACTION_TTL_MS = 15_000;
+const recentModActionKeys = new Map(); // key -> timestamp
+
+function markRecentModAction(guildId, type, subjectId, moderatorId = '*') {
+  try {
+    const now = Date.now();
+    const key = `${String(guildId || 'dm')}:${String(type || 'Unknown')}:${String(subjectId || 'unknown')}:${String(moderatorId || '*')}`;
+    recentModActionKeys.set(key, now);
+    // cheap cleanup
+    for (const [k, ts] of recentModActionKeys) {
+      if ((now - ts) > RECENT_MOD_ACTION_TTL_MS) recentModActionKeys.delete(k);
+    }
+  } catch (e) {}
+}
+
+function hasRecentModAction(guildId, type, subjectId, moderatorId = null) {
+  try {
+    const now = Date.now();
+    const base = `${String(guildId || 'dm')}:${String(type || 'Unknown')}:${String(subjectId || 'unknown')}`;
+
+    if (moderatorId) {
+      const exactKey = `${base}:${String(moderatorId)}`;
+      const exactTs = recentModActionKeys.get(exactKey);
+      if (!!exactTs && ((now - exactTs) <= RECENT_MOD_ACTION_TTL_MS)) return true;
+    }
+
+    // Back-compat / fallback: match wildcard moderator keys
+    const wildcardKey = `${base}:*`;
+    const wildcardTs = recentModActionKeys.get(wildcardKey);
+    return !!wildcardTs && ((now - wildcardTs) <= RECENT_MOD_ACTION_TTL_MS);
+  } catch (e) {
+    return false;
+  }
+}
+
+function normalizeReason(reason) {
+  const r = String(reason || '').trim();
+  return r ? r : 'No reason provided';
+}
+
+function ensurePermBanReason(reason) {
+  const r = normalizeReason(reason);
+  if (/^perm\b/i.test(r)) return r;
+  return `Perm ${r}`;
+}
+
+function writeModlogCaseToMd({ guild, caseId, type, userId, moderatorId, reason, whenTs }) {
+  try {
+    appendModlogsMdEntry({
+      title: type || 'Moderation',
+      userId: userId ? String(userId) : null,
+      type: type || 'Unknown',
+      moderatorId: moderatorId ? String(moderatorId) : null,
+      reason: normalizeReason(reason),
+      caseId,
+      whenTs: whenTs || Date.now(),
+      guild
+    });
+  } catch (e) {}
+}
+
+function createModlogCase({ guild, type, userId, moderatorId, reason, durationMs, extra }) {
+  if (!modlogs || typeof modlogs !== 'object') modlogs = { lastCase: 10000, cases: [] };
+  if (!Array.isArray(modlogs.cases)) modlogs.cases = [];
+  const caseId = nextCase();
+  const entry = {
+    caseId,
+    type: type || 'Unknown',
+    user: userId ? String(userId) : null,
+    moderator: moderatorId ? String(moderatorId) : null,
+    reason: (String(type || '') === 'Ban') ? ensurePermBanReason(reason) : normalizeReason(reason),
+    time: Date.now(),
+    guildId: guild ? String(guild.id) : null,
+  };
+  if (typeof durationMs === 'number') entry.durationMs = durationMs;
+  if (extra && typeof extra === 'object') {
+    try { Object.assign(entry, extra); } catch (e) {}
+  }
+  modlogs.cases.push(entry);
+  saveJson(MODLOGS_PATH, modlogs);
+  writeModlogCaseToMd({ guild, caseId, type: entry.type, userId: entry.user, moderatorId: entry.moderator, reason: entry.reason, whenTs: entry.time });
+  if (guild && entry.user) markRecentModAction(guild.id, entry.type, entry.user, entry.moderator || '*');
+  return caseId;
 }
 
 function parseSessionsClaim(raw) {
@@ -526,17 +829,159 @@ async function sendMessageLogWrapper(payload, guildId) {
 }
 const sendMessageLog = (...args) => sendMessageLogWrapper(...args);
 
+// Ensure the latest "Session parsed" embed in a channel has Claim + Announce buttons
+async function ensureParsedButtons(channel, sessions) {
+  try {
+    if (!channel || typeof channel.messages?.fetch !== 'function') return;
+    const recent = await channel.messages.fetch({ limit: 15 }).catch(()=>null);
+    if (!recent || typeof recent.filter !== 'function') return;
+    const parsedMsgs = recent.filter(m =>
+      m && m.author && client.user && m.author.id === client.user.id &&
+      Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+    );
+    if (!parsedMsgs.size) return;
+    let keep = null;
+    const countFromDesc = (m) => (String(m.embeds[0].description || '').match(/•\s*\d+\./g) || []).length;
+    for (const m of parsedMsgs.values()) {
+      if (!keep) keep = m;
+      else {
+        const a = countFromDesc(m);
+        const b = countFromDesc(keep);
+        if (a > b) keep = m;
+        else if (a === b && m.createdTimestamp > keep.createdTimestamp) keep = m;
+      }
+    }
+    if (!keep) return;
+    const rows = buildSessionButtonRows(keep.id, sessions);
+    await keep.edit({ components: rows }).catch(()=>{});
+  } catch (e) {}
+}
+
+function buildSessionButtonRows(baseId, sessions) {
+  const rows = [];
+  const buttons = [];
+  const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${baseId}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+  buttons.push(claimBtn);
+  if (Array.isArray(sessions) && sessions.length) {
+    for (const s of sessions.slice(0, 10)) {
+      buttons.push(new ButtonBuilder().setCustomId(`session_announce:${baseId}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success));
+    }
+  }
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+  }
+  return rows;
+}
+
 // --- Session post parsing and reminder scheduling ---
 const scheduledReminderTimeouts = new Map();
 // In-memory map to store parsed session post data so we can announce later
 const sessionPostData = new Map();
+// Map origin message id -> posted summary message id
+const sessionOriginToPosted = new Map();
 
 function parseSessionMessage(content, referenceDate) {
   // Parse simple session posts like in screenshots:
   // lines with `1. 17:00 - 17:15` and following line `Staff: @User` or inline `Staff: @User`
-  const lines = String(content || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const sessions = [];
+  // Remove invisible/unicode directionality characters that break timestamp regexes
   const raw = String(content || '');
+  // Keep \n/\r/\t so numbered lines don't collapse into a single line
+  const cleaned = raw.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  const cleaned2 = cleaned.replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '');
+  try { console.log('[session-debug] parseSessionMessage cleaned2 preview:', String(cleaned2 || '').slice(0,300)); } catch (e) {}
+  // Accept literal "\n" sequences as newlines (from prefix simulations) and strip wrapping quotes
+  let norm = String(cleaned2 || '');
+  try { norm = norm.replace(/\\n/g, '\n'); } catch (e) {}
+  norm = norm.trim();
+  if ((norm.startsWith('"') && norm.endsWith('"')) || (norm.startsWith("'") && norm.endsWith("'"))) {
+    norm = norm.slice(1, -1).trim();
+  }
+  const lines = String(norm || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  try { console.log('[session-debug] parseSessionMessage lines:', lines); } catch (e) {}
+  const sessions = [];
+
+  // Global numbered-lines extractor: handles cases where line-splitting is noisy and markup is present
+  try {
+    const globalRe = /(?:^|\n)[>\s|│\u2502]*\s*(\d+)\s*[\.)-]?\s*[*_`~]*\s*([0-2]?\d[:.][0-5]\d)\s*[*_`~]*\s*(?:-|–|—|to)\s*[*_`~]*\s*([0-2]?\d[:.][0-5]\d)\s*[*_`~]*(?:[^\n]*)(?:\n[>\s|│\u2502]*\s*(?:Staff[:\s\*]*([^\n]+)))?/gi;
+    let gm;
+    while ((gm = globalRe.exec(norm)) !== null) {
+      try {
+        const idx = Number(gm[1]);
+        const startStr = gm[2];
+        const endStr = gm[3];
+        const staffRaw = gm[4] ? String(gm[4]).trim() : '';
+        const ref = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+        const [sh, sm] = startStr.split(':').map(Number);
+        const [eh, em] = endStr.split(':').map(Number);
+        const sd = new Date(ref); sd.setHours(sh, sm, 0, 0);
+        const ed = new Date(ref); ed.setHours(eh, em, 0, 0);
+        if (ed.getTime() <= sd.getTime()) ed.setDate(ed.getDate() + 1);
+        sessions.push({ index: idx, start: sd.getTime(), end: ed.getTime(), staff: normalizeStaffText(staffRaw) });
+      } catch (ee) { /* ignore malformed match */ }
+    }
+  } catch (e) { /* ignore global extraction failures */ }
+
+  // Additional fallback: scan each line for any HH:MM - HH:MM pairs (no number required)
+  try {
+    const lineFound = [];
+    for (let i = 0; i < lines.length; i++) {
+      const rawLine = String(lines[i] || '');
+      const cleanLine = rawLine.replace(/^[>\s\|│\u2502]+/, '').trim();
+      // match time pair anywhere in line
+      const m = cleanLine.match(/([0-2]?\d:[0-5]\d)\s*(?:-|–|—|to)\s*([0-2]?\d:[0-5]\d)/);
+      if (m) {
+        // capture optional leading index
+        const idxMatch = cleanLine.match(/^(?:\*+\s*)?\(?\s*(\d+)\s*[\.)\-]?/);
+        const idx = idxMatch ? Number(idxMatch[1]) : null;
+        const startStr = m[1];
+        const endStr = m[2];
+        const ref = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+        const [sh, sm] = startStr.split(':').map(Number);
+        const [eh, em] = endStr.split(':').map(Number);
+        const sd = new Date(ref); sd.setHours(sh, sm, 0, 0);
+        const ed = new Date(ref); ed.setHours(eh, em, 0, 0);
+        if (ed.getTime() <= sd.getTime()) ed.setDate(ed.getDate() + 1);
+        // try next line for staff
+        let staff = '';
+        const next = lines[i+1];
+        if (next) {
+          const nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
+          const smt = nextClean.match(/^(?:staff in charge:|staff[:\s\-–]*)\s*([\s\S]+)/i);
+          if (smt) staff = (smt[1] || '').trim();
+        }
+        lineFound.push({ idx, start: sd.getTime(), end: ed.getTime(), staff: normalizeStaffText(staff) });
+      }
+    }
+    if (lineFound.length) {
+      // If any indexes present, sort by index, otherwise preserve order
+      const hasIndex = lineFound.some(x=>Number.isFinite(x.idx));
+      let out;
+      if (hasIndex) out = lineFound.slice().sort((a,b) => (a.idx||0)-(b.idx||0));
+      else out = lineFound.slice();
+      for (const s of out) sessions.push({ index: s.idx || (sessions.length + 1), start: s.start, end: s.end, staff: s.staff });
+    }
+  } catch (e) { /* ignore */ }
+
+  // If the whole announcement collapsed into a single line, try splitting by numeric markers
+  if (lines.length === 1) {
+    const single = lines[0];
+    const numberCount = (single.match(/\b\d+\s*[\.)-]/g) || []).length;
+    if (numberCount > 1) {
+      const splitLines = single
+        .split(/(?=\b\d+\s*[\.)-])/)
+        .map(s => s.trim())
+        .filter(Boolean)
+        .map(s => {
+          const idx = s.search(/\b\d+\s*[\.)-]/);
+          return idx > 0 ? s.slice(idx).trim() : s;
+        });
+      try { console.log('[session-debug] parseSessionMessage numeric-split into:', splitLines); } catch (e) {}
+      // replace lines with the split chunks for downstream parsing
+      for (let j = 0; j < splitLines.length; j++) lines[j] = splitLines[j];
+      // trim any leftover entries if split produced more than original length
+      lines.length = splitLines.length;
+    }
+  }
 
   function normalizeStaffText(r) {
     if (!r) return '';
@@ -546,64 +991,133 @@ function parseSessionMessage(content, referenceDate) {
     s = s.replace(/\*+\s*/g, '');
     // remove labels like "Staff in charge:" or "Staff:" or "- Staff:"
     s = s.replace(/^(staff in charge:\s*|staff[:\s]*)/i, '');
+    // remove discord channel/message links that sometimes leak into staff text
+    s = s.replace(/https?:\/\/discord\.com\/channels\/\d+\/\d+\/\d+/gi, '').trim();
+    s = s.replace(/https?:\/\/discord\.com\/channels\/\d+\/\d+/gi, '').trim();
     // collapse multiple spaces
     s = s.replace(/\s+/g, ' ').trim();
     return s;
   }
-  // Announcement-style messages with Discord timestamps e.g. "Game 1/3: <t:1768407309:t>"
-  if (/registration opens|game 1\/3|duo practice session/i.test(raw) && /<t:\d+:t>/i.test(raw)) {
+  // Announcement-style messages and the new markdown templates (blockquote + bold), e.g.:
+  // > * **Registration Opens:** <Time>
+  // > * **Game 1/3:** <Time>
+  if (/registration opens|game\s*1\/[0-9]+|duo practice session/i.test(cleaned2)) {
     try {
-      // find Game 1/3 timestamp first
-      const gameMatch = raw.match(/game\s*1\/?3\D*<t:(\d+):t>/i);
-      const regMatch = raw.match(/registration\s*opens\D*<t:(\d+):t>/i);
-      const staffMatch = raw.match(/staff in charge:\s*([\s\S]*?)$/i);
+      // Normalize formatting for easier matching (remove repeat asterisks and blockquote markers)
+      const normForMatch = cleaned2.replace(/\*+/g, '*').replace(/^>\s*/gm, '').replace(/\s+\*\s+/g, ' ').trim();
+      // Find registration opens (timestamp token or HH:MM)
+      const regMatch = normForMatch.match(/registration\s*opens\D*(?:<t:(\d+):t>|([0-2]?\d:[0-5]\d))/i);
+      // Find Game 1/N (capture total games and a timestamp or HH:MM)
+      const gameMatch = normForMatch.match(/game\s*1\/?(\d+)\D*(?:<t:(\d+):t>|([0-2]?\d:[0-5]\d))/i);
+      const staffMatch = normForMatch.match(/staff in charge:\s*([^\n\r]+)/i) || normForMatch.match(/staff[:\s]*([^\n\r]+)/i);
       const staffRaw = staffMatch ? staffMatch[1].trim() : '';
-      const startTs = gameMatch ? Number(gameMatch[1]) * 1000 : (regMatch ? Number(regMatch[1]) * 1000 : null);
+
+      let startTs = null;
+      let totalGames = 1;
+      const defaultDurationMs = 15 * 60 * 1000;
+
+      // Parse both registration and game timestamps if present; prefer explicit Game time
+      let regTsCandidate = null;
+      let gameTsCandidate = null;
+      try {
+        if (regMatch) {
+          if (regMatch[1]) regTsCandidate = Number(regMatch[1]) * 1000;
+          else if (regMatch[2]) {
+            const [sh, sm] = regMatch[2].split(':').map(Number);
+            const sd = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+            sd.setHours(sh, sm, 0, 0);
+            regTsCandidate = sd.getTime();
+          }
+        }
+        if (gameMatch) {
+          totalGames = Number(gameMatch[1]) || 1;
+          if (gameMatch[2]) gameTsCandidate = Number(gameMatch[2]) * 1000;
+          else if (gameMatch[3]) {
+            const [sh, sm] = gameMatch[3].split(':').map(Number);
+            const sd = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+            sd.setHours(sh, sm, 0, 0);
+            gameTsCandidate = sd.getTime();
+          }
+        }
+      } catch (ee) {
+        // ignore parse errors and fall back to previous behavior
+      }
+
+      // Prefer the explicit game time when available; otherwise use registration time
+      if (gameTsCandidate) startTs = gameTsCandidate;
+      else if (regTsCandidate) startTs = regTsCandidate;
+
       if (startTs) {
-        const defaultDurationMs = 15 * 60 * 1000;
-        const endTs = startTs + defaultDurationMs;
-        sessions.push({ index: 1, start: startTs, end: endTs, staff: normalizeStaffText(staffRaw) });
+        for (let g = 0; g < totalGames; g++) {
+          const s = startTs + g * defaultDurationMs;
+          const e = s + defaultDurationMs;
+          sessions.push({ index: g + 1, start: s, end: e, staff: normalizeStaffText(staffRaw) });
+        }
         return sessions;
       }
     } catch (e) {
-      // fallthrough to numbered parsing
+      // fall through to numbered parsing
     }
   }
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
+    // strip common blockquote/pipe markers that appear in pasted announcements
+    const procLine = String(line || '').replace(/^[>\s\|│\u2502]+/,'').trim();
+    const firstNumIdx = procLine.search(/\b\d+\s*[\.)-]/);
+    const matchLine = firstNumIdx > 0 ? procLine.slice(firstNumIdx).trim() : procLine;
     // Support numbered lines using Discord timestamp markup: "1. <t:1769270400:t> - <t:1769271300:t>"
-    const discordTsMatch = line.match(/^(\d+)\.\s*<t:(\d+):t>\s*(?:-|–|to)\s*<t:(\d+):t>/i);
-    if (discordTsMatch) {
-      const idx = parseInt(discordTsMatch[1], 10);
-      const startTs = Number(discordTsMatch[2]) * 1000;
-      const endTs = Number(discordTsMatch[3]) * 1000;
+    // Be tolerant: accept isolates or extra chars around timestamps by extracting all <t:...:t> tokens
+    const numberedMatch = matchLine.match(/^\s*\(?\s*(\d+)\s*[\.)-]/);
+    if (numberedMatch) {
+      const idx = parseInt(numberedMatch[1], 10);
+      const tsMatches = Array.from(matchLine.matchAll(/<t:(\d+):t>/g)).map(m => m[1]);
+      if (tsMatches.length >= 2) {
+        const startTs = Number(tsMatches[0]) * 1000;
+        const endTs = Number(tsMatches[1]) * 1000;
       // staff may be inline or on the next quoted line (e.g. "> **Staff:** <@id>")
       let staff = null;
-      const staffInline = line.match(/staff[:\s\*]*([\s\S]+)/i);
+      const staffInline = matchLine.match(/staff(?:\s+in\s+charge)?[:\s\*]*([\s\S]+)/i);
       if (staffInline) staff = staffInline[1].trim();
       else {
         const next = lines[i+1];
-        if (next && /staff[:\s\*]/i.test(next)) {
-          staff = next.replace(/^[>\s]*staff[:\s\*]*/i, '').trim();
+        if (next) {
+          let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
+          nextClean = nextClean.replace(/^[*_`~\s]+/, '');
+          if (/^staff/i.test(nextClean)) {
+            staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
+          }
         }
       }
-      sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
-      continue;
+        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+        continue;
+      }
+      // fallback to previous strict match if needed
     }
-    const timeMatch = line.match(/^(\d+)\.\s*([0-2]?\d:[0-5]\d)\s*(?:-|–|to)\s*([0-2]?\d:[0-5]\d)/i);
+    const discordTsMatch = matchLine.match(/^(\d+)\s*[\.)-]\s*<t:(\d+):t>\s*(?:-|–|—|to)\s*<t:(\d+):t>/i);
+    if (discordTsMatch) {
+      const idx2 = parseInt(discordTsMatch[1], 10);
+      const startTs = Number(discordTsMatch[2]) * 1000;
+      const endTs = Number(discordTsMatch[3]) * 1000;
+      const idx = idx2;
+    }
+    const timeMatch = matchLine.match(/^(\d+)\s*[\.)-]\s*([0-2]?\d[:.][0-5]\d)\s*(?:-|–|—|to)\s*([0-2]?\d[:.][0-5]\d)/i);
     if (timeMatch) {
       const idx = parseInt(timeMatch[1], 10);
       const start = timeMatch[2];
       const end = timeMatch[3];
       // look for staff on same line
       let staff = null;
-      const staffInline = line.match(/staff[:\s]*([\s\S]+)/i);
+      const staffInline = matchLine.match(/staff(?:\s+in\s+charge)?[:\s]*([\s\S]+)/i);
       if (staffInline) staff = staffInline[1].trim();
       else {
         // look next line
         const next = lines[i+1];
-        if (next && /staff[:\s]/i.test(next)) {
-          staff = next.replace(/staff[:\s]*/i, '').trim();
+        if (next) {
+          let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
+          nextClean = nextClean.replace(/^[*_`~\s]+/, '');
+          if (/^staff/i.test(nextClean)) {
+            staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s]*/i, '').trim();
+          }
         }
       }
       // build Date objects using referenceDate's day
@@ -618,8 +1132,100 @@ function parseSessionMessage(content, referenceDate) {
       if (endDt.getTime() <= startDt.getTime()) endDt.setDate(endDt.getDate() + 1);
       sessions.push({ index: idx, start: startDt.getTime(), end: endDt.getTime(), staff: normalizeStaffText(staff) });
     }
+
+    // Per-line fallback: any line with 2+ timestamp tokens
+    if (!timeMatch) {
+      const tsMatches = Array.from(matchLine.matchAll(/<t:(\d+):t>/g)).map(m => m[1]);
+      if (tsMatches.length >= 2) {
+        const idx = numberedMatch ? parseInt(numberedMatch[1], 10) : (sessions.length + 1);
+        const startTs = Number(tsMatches[0]) * 1000;
+        const endTs = Number(tsMatches[1]) * 1000;
+        let staff = null;
+        const staffInline = matchLine.match(/staff(?:\s+in\s+charge)?[:\s\*]*([\s\S]+)/i);
+        if (staffInline) staff = staffInline[1].trim();
+        else {
+          const next = lines[i+1];
+          if (next) {
+            let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
+            nextClean = nextClean.replace(/^[*_`~\s]+/, '');
+            if (/^staff/i.test(nextClean)) {
+              staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
+            }
+          }
+        }
+        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+      }
+    }
   }
-  return sessions.sort((a,b)=>a.index-b.index);
+  // Fallback: if we found nothing but there are many Discord timestamp tokens in the text,
+  // group them pairwise as sessions so the parser returns entries even when line breaks are lost.
+  if (sessions.length === 0) {
+    try {
+      const allTs = Array.from(String(norm || '').matchAll(/<t:(\d+):t>/g)).map(m => m[1]);
+      if (allTs.length >= 2) {
+        for (let k = 0; k + 1 < allTs.length; k += 2) {
+          const startTs = Number(allTs[k]) * 1000;
+          const endTs = Number(allTs[k + 1]) * 1000;
+          sessions.push({ index: sessions.length + 1, start: startTs, end: endTs, staff: '' });
+        }
+      }
+      // additional fallback: find time-pairs (either <t:...:t> tokens or HH:MM - HH:MM) anywhere
+      if (sessions.length === 0) {
+        const timePairRegex = /(?:(\b\d+)[\.\)\-]?\s*)?(?:<t:(\d+):t>|([0-2]?\d:[0-5]\d))\s*(?:-|–|to)\s*(?:<t:(\d+):t>|([0-2]?\d:[0-5]\d))/gi;
+        let m;
+        while ((m = timePairRegex.exec(norm)) !== null) {
+          const idxFound = m[1] ? Number(m[1]) : (sessions.length + 1);
+          let startTs = null;
+          let endTs = null;
+          if (m[2]) startTs = Number(m[2]) * 1000;
+          else if (m[3]) {
+            const [sh, sm] = m[3].split(':').map(Number);
+            const sd = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+            sd.setHours(sh, sm, 0, 0);
+            startTs = sd.getTime();
+          }
+          if (m[4]) endTs = Number(m[4]) * 1000;
+          else if (m[5]) {
+            const [eh, em] = m[5].split(':').map(Number);
+            const ed = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+            ed.setHours(eh, em, 0, 0);
+            if (startTs && ed.getTime() <= startTs) ed.setDate(ed.getDate() + 1);
+            endTs = ed.getTime();
+          }
+          // extract staff by scanning a short window after the match
+          let staff = '';
+          try {
+            const after = norm.slice(timePairRegex.lastIndex, timePairRegex.lastIndex + 200);
+            const staffMatch = after.match(/(?:staff|leitung|team)[:\s]*([^\n\r]{1,120})/i);
+            if (staffMatch) staff = staffMatch[1] ? staffMatch[1].trim() : staffMatch[0];
+          } catch (e) {}
+          if (startTs && endTs) sessions.push({ index: idxFound, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+        }
+      }
+    } catch (e) {
+      // ignore fallback errors
+    }
+  }
+  // Sort by start time then index, dedupe identical time slots, and reindex sequentially
+  let ordered = sessions.slice().sort((a, b) => {
+    const sa = typeof a.start === 'number' ? a.start : 0;
+    const sb = typeof b.start === 'number' ? b.start : 0;
+    if (sa !== sb) return sa - sb;
+    return (a.index || 0) - (b.index || 0);
+  });
+  const seen = new Set();
+  const deduped = [];
+  for (const s of ordered) {
+    const key = `${s.start || 0}-${s.end || 0}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(s);
+  }
+  const needsReindex = deduped.some((s, i) => Number(s.index) !== i + 1);
+  if (needsReindex) {
+    return deduped.map((s, i) => ({ ...s, index: i + 1 }));
+  }
+  return deduped;
 }
 
 function persistReminders(reminders) {
@@ -671,7 +1277,6 @@ function initSqlite() {
 }
 
 const sqliteDb = initSqlite();
-console.log('== DEBUG_POINT_1: sqlite init done');
 
 // in-memory claim tracking: messageId -> Set of userIds
 const sessionClaims = new Map();
@@ -701,8 +1306,13 @@ function loadSessionPosts() {
   try {
     const obj = loadJson(SESSIONS_POSTS_PATH, {});
     sessionPostData.clear();
+    sessionOriginToPosted.clear();
     for (const k of Object.keys(obj || {})) {
       try { sessionPostData.set(String(k), obj[k]); } catch (e) {}
+      try {
+        const data = obj[k];
+        if (data && data.originMessageId) sessionOriginToPosted.set(String(data.originMessageId), String(k));
+      } catch (e) {}
     }
   } catch (e) { console.error('failed to load session posts', e); }
 }
@@ -716,7 +1326,6 @@ function saveSessionPosts() {
 }
 
 loadSessionPosts();
-console.log('== DEBUG_POINT_2: session posts loaded');
 
 function sqlitePersistReminder(rem) {
   if (!sqliteDb) return;
@@ -826,8 +1435,6 @@ const client = new Client({
   ],
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.GuildMember]
 });
-console.log('== DEBUG: client constructed');
-console.log('== DEBUG_POINT_3: client constructed log emitted');
 
 // Prevent uncaught errors from crashing the process
 client.on('error', (err) => {
@@ -913,6 +1520,34 @@ client.on('messageCreate', async (message) => {
         muted = false;
       }
     } catch (e) { muted = false; muteError = String(e && e.message ? e.message : e); }
+
+    // Mirror automod enforcement to modlogs.json + actions.md (unified case format)
+    try {
+      const mdReason = reasonParts.length ? reasonParts.join(' + ') : 'No reason provided';
+      if (deleted || muted) {
+        const chName = message.channel && message.channel.name ? `#${message.channel.name}` : null;
+        const preview = text.substring(0, 200).replace(/\s+/g, ' ').trim();
+        const type = muted ? 'AutoMute' : 'AutoModDelete';
+        const durationMs = muted ? (muteMinutes * 60 * 1000) : undefined;
+
+        createModlogCase({
+          guild: message.guild,
+          type,
+          userId: message.author.id,
+          moderatorId: 'AutoMod',
+          reason: mdReason,
+          durationMs,
+          extra: {
+            channelId: message.channel ? String(message.channel.id) : null,
+            channelName: chName,
+            messageId: message.id ? String(message.id) : null,
+            deleted: !!deleted,
+            timedOut: !!muted,
+            preview: preview || null,
+          }
+        });
+      }
+    } catch (e) {}
 
     // Log removal
     try {
@@ -1009,12 +1644,60 @@ async function sendSessionDm(clientOrUserId, content) {
 // Watch for session posts in the Beta sessions channel and schedule DMs
 client.on('messageCreate', async (message) => {
   try {
-    if (!message || message.author?.bot) return;
-    if (!message.channel || !message.content) return;
+    if (!message) return;
+    const isBot = Boolean(message.author?.bot);
+    const isSelf = Boolean(client.user && message.author && message.author.id === client.user.id);
+    const isWebhook = Boolean(message.webhookId);
+    // Build a best-effort textual representation of the message: prefer content, fall back to embed text
+    let contentText = '';
+    try {
+      if (typeof message.content === 'string' && message.content.trim()) contentText = message.content;
+      else if (Array.isArray(message.embeds) && message.embeds.length) {
+        const parts = [];
+        for (const e of message.embeds) {
+          try {
+            if (e.title) parts.push(String(e.title));
+            if (e.description) parts.push(String(e.description));
+            if (Array.isArray(e.fields)) for (const f of e.fields) parts.push(String(f.name || '') + ' ' + String(f.value || ''));
+          } catch (ee) {}
+        }
+        contentText = parts.join('\n').trim();
+      }
+    } catch (e) { contentText = typeof message.content === 'string' ? message.content : ''; }
+    // Debug logging to trace why messages may be skipped
+    try {
+      console.log('[session-debug] incoming message:', {
+        id: message.id,
+        channelId: message.channel?.id,
+        channelName: message.channel?.name,
+        authorId: message.author?.id,
+        authorTag: message.author?.tag,
+        isBot, isSelf, isWebhook, isSeed: !!message._isSeed,
+        hasContent: !!contentText,
+        contentPreview: (contentText || '').slice(0,120)
+      });
+    } catch (e) {}
+    // Ignore our own messages to avoid processing duplicates; allow other bots in watched channels
+    if (isBot && !message._isSeed) {
+      if (isSelf) {
+        console.log('[session-debug] ignoring self-authored message to avoid duplicate processing');
+        return;
+      }
+      const allowBotInWatch = message.channel && (String(message.channel.id) === '1461370702895779945' || String(message.channel.id) === '1461370812639481888');
+      if (!allowBotInWatch && !isWebhook) {
+        console.log('[session-debug] skipping other bot message');
+        return;
+      }
+    }
+    if (!message.channel) return;
+    if (!contentText && !message._isSeed) {
+      console.log('[session-debug] no text content to parse (no content and no embed text)');
+      return;
+    }
 
     // Message create logging removed per user request.
 
-    const originalRawFull = String(message.content || '');
+    const originalRawFull = String(contentText || '');
 
     // Global help triggered by `-help` (legacy/dash help)
     try {
@@ -1047,7 +1730,8 @@ client.on('messageCreate', async (message) => {
       if (cmd === 'create') {
         const rest = message.content.slice((PREFIX + 'create').length).trim();
                  if (!rest) return message.channel.send('Please paste the announcement after `*create`.');
-        const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: rest, channel: message.channel, createdAt: new Date(), react: async () => {}, _isSeed: true };
+        const processedRest = rest.replace(/\\n/g, '\n');
+        const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: processedRest, channel: message.channel, createdAt: new Date(), react: async () => {}, _isSeed: true };
                  try { client.emit('messageCreate', fakeMsg); await message.channel.send('Announcement imported and processed.'); } catch (e) { await message.channel.send('Import failed.'); }
         return;
       }
@@ -1056,7 +1740,8 @@ client.on('messageCreate', async (message) => {
         if (sub === 'create') {
           const rest = args.join(' ').trim();
                      if (!rest) return message.channel.send('Please paste the announcement after `*session create`.');
-          const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: rest, channel: message.channel, createdAt: new Date(), react: async () => {}, _isSeed: true };
+          const processedRest = rest.replace(/\\n/g, '\n');
+          const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: processedRest, channel: message.channel, createdAt: new Date(), react: async () => {}, _isSeed: true };
                      try { client.emit('messageCreate', fakeMsg); await message.channel.send('Announcement imported and processed.'); } catch (e) { await message.channel.send('Import failed.'); }
           return;
         }
@@ -1076,16 +1761,17 @@ client.on('messageCreate', async (message) => {
          }
         if (sub === 'testpost') {
           const mode = (args.shift() || '').toLowerCase();
-          const rest = args.join(' ');
+            const rest = args.join(' ');
+            const processedRest = rest.replace(/\\n/g, '\n');
           const fakeChannelId = (mode === 'alpha') ? '1461370812639481888' : (mode === 'beta' ? '1461370702895779945' : message.channel.id);
           const fakeChannel = { id: fakeChannelId, send: async () => {}, isTextBased: () => true };
-          const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: rest, channel: fakeChannel, createdAt: new Date(), react: async () => {}, _isSeed: true };
+            const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: processedRest, channel: fakeChannel, createdAt: new Date(), react: async () => {}, _isSeed: true };
           try {
             client.emit('messageCreate', fakeMsg);
             await message.channel.send('Simulation sent.');
             // Also parse and post the embed into the invoking channel so the user sees the parsed result
             try {
-              const sessions = parseSessionMessage(rest, new Date());
+                const sessions = parseSessionMessage(processedRest, new Date());
               if (sessions && sessions.length) {
                 const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
                 const simEmbed = new EmbedBuilder().setTitle('Simulated session (parsed)').setColor(0x87CEFA).setDescription(lines.join('\n')).setTimestamp();
@@ -1322,12 +2008,165 @@ client.on('messageCreate', async (message) => {
       }
     }
 
-    // Only respond to the configured Alpha/Beta session channels
+    // Only respond to the configured Alpha/Beta session channels (or likely session channels)
     const WATCH_CHANNEL_IDS = loadWatchChannels(message.guildId);
-    if (!WATCH_CHANNEL_IDS.has(String(message.channel.id))) return;
+    const channelIdStr = String(message.channel.id);
+    const channelName = String(message.channel?.name || '').toLowerCase();
+    const isWatched = WATCH_CHANNEL_IDS.has(channelIdStr);
+    const looksLikeSession = /\b\d+\.\s*[0-2]?\d:[0-5]\d\s*(?:-|–|to)\s*[0-2]?\d:[0-5]\d\b|registration\s*opens|game\s*1\/3|duo\s*practice\s*session|<t:\d+:t>/i.test(contentText);
+    const nameLooksLikeSession = /(alpha|beta|session|sessions|claim|claiming)/i.test(channelName);
+    // Debug info about why we might proceed or skip
+    try {
+      console.log('[session-debug] watch check:', { WATCH_CHANNEL_IDS: Array.from(WATCH_CHANNEL_IDS).slice(0,20), channelIdStr, channelName, isWatched, looksLikeSession, nameLooksLikeSession });
+    } catch (e) {}
+    if (!isWatched && !(looksLikeSession && nameLooksLikeSession)) {
+      console.log('[session-debug] skipping: channel not watched and does not look like session');
+      return;
+    }
 
-    const sessions = parseSessionMessage(message.content, message.createdAt);
-    if (!sessions || !sessions.length) return;
+    const sessions = parseSessionMessage(contentText, message.createdAt);
+    console.log('[session-debug] parsed sessions count:', Array.isArray(sessions) ? sessions.length : 0);
+    if (!sessions || !sessions.length) {
+      console.log('[session-debug] no sessions parsed from message content');
+      return;
+    }
+
+    // Hard guarantee: in the two session-claiming channels, always post a fresh parsed summary with buttons
+    try {
+      const forceChannels = new Set(['1461370702895779945', '1461370812639481888']);
+      if (message.channel && forceChannels.has(String(message.channel.id))) {
+        const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
+        const sumEmbed = new EmbedBuilder()
+          .setTitle('Session parsed')
+          .setColor(0x87CEFA)
+          .setDescription(lines.join('\n'))
+          .setTimestamp();
+        // remove any previous parsed summaries from the bot in this channel
+        try {
+          const recent = await message.channel.messages.fetch({ limit: 15 }).catch(()=>null);
+          if (recent && typeof recent.filter === 'function') {
+            const parsedMsgs = recent.filter(m =>
+              m && m.author && client.user && m.author.id === client.user.id &&
+              Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+            );
+            for (const m of parsedMsgs.values()) await m.delete().catch(()=>{});
+          }
+        } catch (e) {}
+        const rowsPending = buildSessionButtonRows('pending', sessions);
+        const posted = await (typeof message.reply === 'function'
+          ? message.reply({ embeds: [sumEmbed], components: rowsPending, allowedMentions: { parse: [] } })
+          : message.channel.send({ embeds: [sumEmbed], components: rowsPending, allowedMentions: { parse: [] } })
+        ).catch(()=>null);
+        if (posted) {
+          try {
+            const rows2 = buildSessionButtonRows(posted.id, sessions);
+            await posted.edit({ embeds: [sumEmbed], components: rows2 }).catch(()=>{});
+          } catch (e) {}
+          try {
+            const rawVal = (typeof originalRawFull === 'string' && originalRawFull.length) ? originalRawFull.substring(0, 4000) : String(message.content || '').substring(0, 4000);
+            sessionPostData.set(String(posted.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions, postedAt: Date.now() });
+            sessionOriginToPosted.set(String(message.id), String(posted.id));
+            try { saveSessionPosts(); } catch (e) {}
+          } catch (e) {}
+        }
+        // continue with logging, but avoid duplicate summary posting
+        summaryHandled = true;
+      }
+    } catch (e) {}
+
+    let summaryHandled = false;
+
+    // If we already posted a summary for this origin message, update it instead of posting a new one
+    try {
+      const postedChannel = await client.channels.fetch(message.channel.id).catch(()=>null);
+      if (postedChannel && typeof postedChannel.messages?.fetch === 'function') {
+        const recent = await postedChannel.messages.fetch({ limit: 15 }).catch(()=>null);
+        if (recent && typeof recent.filter === 'function') {
+          const candidates = recent.filter(m =>
+            m && m.author && client.user && m.author.id === client.user.id &&
+            Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+          );
+          if (candidates.size) {
+            const countFromDesc = (m) => (String(m.embeds[0].description || '').match(/•\s*\d+\./g) || []).length;
+            let keep = null;
+            for (const m of candidates.values()) {
+              if (!keep) keep = m;
+              else {
+                const a = countFromDesc(m);
+                const b = countFromDesc(keep);
+                if (a > b) keep = m;
+                else if (a === b && m.createdTimestamp > keep.createdTimestamp) keep = m;
+              }
+            }
+            // delete all other session-parsed embeds
+            for (const m of candidates.values()) {
+              if (keep && m.id !== keep.id) await m.delete().catch(()=>{});
+            }
+            if (keep) {
+              let updated = false;
+              const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
+              const sumEmbed = new EmbedBuilder()
+                .setTitle('Session parsed')
+                .setColor(0x87CEFA)
+                .setDescription(lines.join('\n'))
+                .setTimestamp();
+              const components = [];
+              const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${keep.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+              components.push(claimBtn);
+              if (Array.isArray(sessions) && sessions.length) {
+                for (const s of sessions.slice(0, 10)) {
+                  const a = new ButtonBuilder().setCustomId(`session_announce:${keep.id}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
+                  components.push(a);
+                }
+              }
+              const row = new ActionRowBuilder().addComponents(...components);
+              try {
+                await keep.edit({ embeds: [sumEmbed], components: [row] }).catch(()=>{});
+                updated = true;
+              } catch (e) {}
+              const rawVal = (typeof originalRawFull === 'string' && originalRawFull.length) ? originalRawFull.substring(0, 4000) : String(message.content || '').substring(0, 4000);
+              sessionPostData.set(String(keep.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions, postedAt: Date.now() });
+              sessionOriginToPosted.set(String(message.id), String(keep.id));
+              try { saveSessionPosts(); } catch (e) {}
+              if (updated) summaryHandled = true;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+    // Clean up stale parsed embeds in the same channel (keep only the best/latest one)
+    try {
+      const ch = message.channel;
+      if (ch && typeof ch.messages?.fetch === 'function') {
+        const recent = await ch.messages.fetch({ limit: 10 }).catch(()=>null);
+        if (recent && typeof recent.filter === 'function') {
+          const currentCount = sessions.length;
+          const stale = recent.filter(m =>
+            m && m.author && client.user && m.author.id === client.user.id &&
+            Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+          );
+          for (const m of stale.values()) {
+            try {
+              const desc = String(m.embeds[0].description || '');
+              const count = (desc.match(/•\s*\d+\./g) || []).length;
+              if (count && count < currentCount) {
+                await m.delete().catch(()=>{});
+              }
+            } catch (ee) {}
+          }
+        }
+      }
+    } catch (e) {}
+    try {
+      const key = `session_parsed:${message.id}`;
+      const now = Date.now();
+      const last = recentSendCache.get(key);
+      if (last && (now - last) < RECENT_SEND_WINDOW_MS) {
+        console.log('[session-debug] recent duplicate detected, skipping parsed embed');
+        return;
+      }
+      recentSendCache.set(key, now);
+    } catch (e) {}
 
     const authorId = message.author.id;
 
@@ -1355,24 +2194,42 @@ client.on('messageCreate', async (message) => {
         // Build a detailed sessions log embed containing the raw announcement and parsed sessions
         const raw = originalRawFull.substring(0, 1900);
         const parsedLines = lines.slice(0, 12).join('\n') || 'No parsed sessions';
+        const safeParsed = parsedLines.length > 1000 ? parsedLines.slice(0, 1000) + '…' : parsedLines;
+        const safeRaw = raw.length > 1000 ? raw.slice(0, 1000) + '…' : raw;
         const logEmbed = new EmbedBuilder()
           .setTitle('Session Announcement (full)')
           .setColor(0x87CEFA)
           .addFields(
             { name: 'Author', value: `<@${message.author.id}>`, inline: true },
             { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
-            { name: 'Parsed Sessions', value: parsedLines, inline: false },
-            { name: 'Raw Announcement (truncated)', value: raw, inline: false }
+            { name: 'Parsed Sessions', value: safeParsed, inline: false },
+            { name: 'Raw Announcement (truncated)', value: safeRaw, inline: false }
           ).setTimestamp();
-        try { await sendSessionsLog({ embeds: [logEmbed] }, message.guildId); await sendMessageLog(logEmbed, message.guildId); } catch(e) { console.error('failed to send sessions log', e); }
+        try {
+          await sendSessionsLog({ embeds: [logEmbed] }, message.guildId);
+          await sendMessageLog(logEmbed, message.guildId);
+        } catch(e) { console.error('failed to send sessions log', e); }
       } catch (e) { console.error('failed to send sessions log', e); }
 
       // Also post a light-blue embed into the same channel where the announcement was posted (helps visual confirmation)
       try {
-        if (message && message.channel && typeof message.channel.send === 'function') {
-          const posted = await message.channel.send({ embeds: [sumEmbed] }).catch(()=>null);
+        if (!summaryHandled && message && message.channel && typeof message.channel.send === 'function') {
+          console.log('[session-debug] attempting to post parsed summary embed into origin channel', message.channel.id);
+          // prepare buttons for immediate attach
+          const components = [];
+          const claimBtn = new ButtonBuilder().setCustomId(`session_claim:pending`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+          components.push(claimBtn);
+          if (Array.isArray(sessions) && sessions.length) {
+            for (const s of sessions.slice(0, 10)) {
+              const a = new ButtonBuilder().setCustomId(`session_announce:pending:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
+              components.push(a);
+            }
+          }
+          const row = new ActionRowBuilder().addComponents(...components);
+          const posted = await message.channel.send({ embeds: [sumEmbed], components: [row] }).catch((err)=>{ console.error('[session-debug] failed to send parsed summary embed', err); return null; });
           // Do not send @everyone when the author posts the original announcement (avoid pinging on initial post)
                 if (posted) {
+            console.log('[session-debug] parsed summary embed posted, id=', posted.id);
             try {
               const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${posted.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
               const components = [claimBtn];
@@ -1395,7 +2252,8 @@ client.on('messageCreate', async (message) => {
               // store original raw announcement and metadata to allow announcing later
                 try {
                 const rawVal = (typeof originalRawFull === 'string' && originalRawFull.length) ? originalRawFull.substring(0, 4000) : String(message.content || '').substring(0, 4000);
-                sessionPostData.set(String(posted.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions });
+                sessionPostData.set(String(posted.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions, postedAt: Date.now() });
+                sessionOriginToPosted.set(String(message.id), String(posted.id));
                 try { saveSessionPosts(); } catch (ee3) { console.error('failed to persist session post data', ee3); }
               } catch (ee2) { console.error('failed to store session post data', ee2); }
               // Remind buttons removed (reminders disabled)
@@ -1403,9 +2261,88 @@ client.on('messageCreate', async (message) => {
           }
         }
       } catch (e) { console.error('failed to post parsed embed in original channel', e); }
+      // Final safeguard: ensure latest parsed embed in-channel has buttons or post one if missing
+      try {
+        const ch = message.channel;
+        if (ch && typeof ch.messages?.fetch === 'function') {
+          const recent = await ch.messages.fetch({ limit: 15 }).catch(()=>null);
+          if (recent && typeof recent.filter === 'function') {
+            const parsedMsgs = recent.filter(m =>
+              m && m.author && client.user && m.author.id === client.user.id &&
+              Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+            );
+            if (!parsedMsgs.size) {
+              const components = [];
+              const claimBtn = new ButtonBuilder().setCustomId(`session_claim:pending`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+              components.push(claimBtn);
+              if (Array.isArray(sessions) && sessions.length) {
+                for (const s of sessions.slice(0, 10)) {
+                  const a = new ButtonBuilder().setCustomId(`session_announce:pending:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
+                  components.push(a);
+                }
+              }
+              const row = new ActionRowBuilder().addComponents(...components);
+              const posted = await ch.send({ embeds: [sumEmbed], components: [row] }).catch(()=>null);
+              if (posted) {
+                try {
+                  const claimBtn2 = new ButtonBuilder().setCustomId(`session_claim:${posted.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+                  const comps2 = [claimBtn2];
+                  if (Array.isArray(sessions) && sessions.length) {
+                    for (const s of sessions.slice(0, 10)) {
+                      const a = new ButtonBuilder().setCustomId(`session_announce:${posted.id}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
+                      comps2.push(a);
+                    }
+                  }
+                  const row2 = new ActionRowBuilder().addComponents(...comps2);
+                  await posted.edit({ embeds: [sumEmbed], components: [row2] }).catch(()=>{});
+                } catch (e) {}
+                try {
+                  const rawVal = (typeof originalRawFull === 'string' && originalRawFull.length) ? originalRawFull.substring(0, 4000) : String(message.content || '').substring(0, 4000);
+                  sessionPostData.set(String(posted.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions, postedAt: Date.now() });
+                  sessionOriginToPosted.set(String(message.id), String(posted.id));
+                  try { saveSessionPosts(); } catch (e) {}
+                } catch (e) {}
+              }
+            }
+            if (parsedMsgs.size) {
+              const countFromDesc = (m) => (String(m.embeds[0].description || '').match(/•\s*\d+\./g) || []).length;
+              let keep = null;
+              for (const m of parsedMsgs.values()) {
+                if (!keep) keep = m;
+                else {
+                  const a = countFromDesc(m);
+                  const b = countFromDesc(keep);
+                  if (a > b) keep = m;
+                  else if (a === b && m.createdTimestamp > keep.createdTimestamp) keep = m;
+                }
+              }
+              if (keep) {
+                const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
+                const sumEmbed = new EmbedBuilder()
+                  .setTitle('Session parsed')
+                  .setColor(0x87CEFA)
+                  .setDescription(lines.join('\n'))
+                  .setTimestamp();
+                const components = [];
+                const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${keep.id}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
+                components.push(claimBtn);
+                if (Array.isArray(sessions) && sessions.length) {
+                  for (const s of sessions.slice(0, 10)) {
+                    const a = new ButtonBuilder().setCustomId(`session_announce:${keep.id}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
+                    components.push(a);
+                  }
+                }
+                const row = new ActionRowBuilder().addComponents(...components);
+                await keep.edit({ embeds: [sumEmbed], components: [row] }).catch(()=>{});
+              }
+            }
+          }
+        }
+      } catch (e) {}
     } catch (e) { console.error('failed to DM author session summary', e); }
 
     // Reminders disabled: do not DM or schedule session reminders.
+    try { await ensureParsedButtons(message.channel, sessions); } catch (e) {}
   } catch (e) { console.error('session post handler failed', e); }
 });
 
@@ -1467,6 +2404,25 @@ function humanDurationLong(ms) {
   return '0 seconds';
 }
 
+// Helper: parse time string (HH:MM or unix seconds) to unix seconds
+function parseTimeToUnixSeconds(input, referenceDate) {
+  if (!input) return null;
+  const s = String(input).trim();
+  if (/^\d{9,}$/.test(s)) return parseInt(s, 10); // already unix seconds
+  const m = s.match(/^([0-2]?\d):([0-5]\d)$/);
+  if (m) {
+    const h = Number(m[1]);
+    const min = Number(m[2]);
+    const ref = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+    const d = new Date(ref);
+    d.setHours(h, min, 0, 0);
+    // if time already passed today, roll to next day
+    if (d.getTime() + 60000 < ref.getTime()) d.setDate(d.getDate() + 1);
+    return Math.floor(d.getTime() / 1000);
+  }
+  return null;
+}
+
 client.on('interactionCreate', async (interaction) => {
   // Ticket system: create + close button interactions
   try {
@@ -1504,7 +2460,7 @@ client.on('interactionCreate', async (interaction) => {
           const sessionLabel = type === 'alpha' ? ':alpha:' : ':beta:';
           let saBuilder = null;
           try { saBuilder = require(path.join(DATA_DIR, 'commands', 'sa.js')); } catch (e) { saBuilder = null; }
-          let content = `Duo Practice Session ${sessionLabel}\n> * **Registration Opens:** <t:${regTs}:t>\n> * **Game 1/3:** <t:${gameTs}:t>\n\nStaff in charge: <@${staff.id}>\n\nRead ${links}`;
+          let content = `### Duo Practice Session ${sessionLabel}\n\n> * **Registration Opens:** <t:${regTs}:t>\n> * **Game 1/3:** <t:${gameTs}:t>\n\nStaff in charge: <@${staff.id}>\n\n${links}`;
           if (saBuilder && typeof saBuilder.buildAnnouncement === 'function') {
             try { content = saBuilder.buildAnnouncement({ mode: type, regTs, gameTs, staffMentions: `<@${staff.id}>`, includeEveryone: true }); } catch (e) {}
           } else {
@@ -1717,7 +2673,16 @@ client.on('interactionCreate', async (interaction) => {
         const parts = interaction.customId.split(':');
         const msgId = parts[1];
         const sessionIndex = parts[2] ? parseInt(parts[2], 10) : null;
-        const data = sessionPostData.get(String(msgId));
+        let data = sessionPostData.get(String(msgId));
+        if (!data) {
+          try {
+            const all = Array.from(sessionPostData.values()).filter(v => String(v.originChannelId || '') === String(interaction.channelId));
+            if (all.length) {
+              all.sort((a,b) => (b.postedAt || 0) - (a.postedAt || 0));
+              data = all[0];
+            }
+          } catch (e) {}
+        }
         if (!data) return interaction.editReply({ content: 'No stored announcement found (too old or not available).', ephemeral: true });
 
         const cfg = loadGuildConfig(interaction.guildId);
@@ -1742,22 +2707,26 @@ client.on('interactionCreate', async (interaction) => {
             else { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
           } catch (e) { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
 
-          // Prefer explicit timestamps from the original raw announcement when available
+          // Prefer the selected session timestamps to ensure Announce Sx uses the correct time
           let gameTs = null;
           let regTs = null;
+          if (sess && sess.start) {
+            gameTs = Math.floor(sess.start / 1000);
+            // Default registration opens 15 minutes before selected session
+            regTs = gameTs - (15 * 60);
+          }
           try {
-            if (data.raw) {
+            if (!gameTs && data.raw) {
               const tsMatches = Array.from(String(data.raw).matchAll(/<t:(\d+):t>/g)).map(m=>parseInt(m[1],10));
               if (tsMatches.length >= 2) {
                 regTs = tsMatches[0];
                 gameTs = tsMatches[1];
               } else if (tsMatches.length === 1) {
-                // single timestamp — assume it's the game time
                 gameTs = tsMatches[0];
               }
             }
           } catch (e) { /* ignore */ }
-          if (!gameTs) gameTs = sess && sess.start ? Math.floor(sess.start/1000) : Math.floor(Date.now()/1000);
+          if (!gameTs) gameTs = Math.floor(Date.now() / 1000);
           if (!regTs) regTs = gameTs - (15 * 60);
           let staffMentions = (sess && sess.staff) ? sess.staff : '';
           if (!staffMentions) {
@@ -1869,7 +2838,7 @@ client.on('interactionCreate', async (interaction) => {
               }
             } catch (e) { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
 
-            const includeEveryone = (String(data.raw || '') || '').includes('@everyone');
+            const includeEveryone = true;
             const built = saBuilder.buildAnnouncement({ mode: mode, regTs, gameTs, staffMentions, includeEveryone });
             if (built) contentToSend = built;
           }
@@ -1877,14 +2846,13 @@ client.on('interactionCreate', async (interaction) => {
 
         // ensure @everyone included when requested (append literal text so it appears in DM)
         try {
-          const includeEveryone = /@everyone\b/.test(String(data.raw || ''));
-          if (includeEveryone && !String(contentToSend).includes('@everyone')) contentToSend = String(contentToSend) + "\n\n@everyone";
+          if (!String(contentToSend).includes('@everyone')) contentToSend = String(contentToSend) + "\n\n@everyone";
         } catch (e) {}
         // Do not DM the clicker; post announcement into the current channel
         try {
           const safeContent = String(contentToSend || '').substring(0, 4000);
           if (interaction.channel && typeof interaction.channel.send === 'function') {
-            await interaction.channel.send({ content: safeContent, allowedMentions: { parse: ['roles'], everyone: includeEveryone } }).catch(()=>{});
+            await interaction.channel.send({ content: safeContent, allowedMentions: { parse: ['roles', 'everyone'], everyone: true } }).catch(()=>{});
             await interaction.editReply({ content: 'Announcement posted in this channel.', ephemeral: true });
           } else {
             await interaction.editReply({ content: 'Could not post announcement in channel.', ephemeral: true });
@@ -2220,6 +3188,39 @@ client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(Date());
   console.log(`🔥 CYBRANCEE Bot is online!`);
+
+  // Seed voice activity sessions for members already in voice.
+  try { voiceActivity.seedFromClient(client); } catch (e) {}
+
+  // Bot updates: log boot + code/package timestamps
+  try {
+    let version = 'unknown';
+    try {
+      const pkgPath = path.join(__dirname, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        if (pkg && pkg.version) version = String(pkg.version);
+      }
+    } catch (e) {}
+
+    let codeUpdatedAt = null;
+    try {
+      const st = fs.statSync(__filename);
+      codeUpdatedAt = st && st.mtime ? st.mtime.toISOString() : null;
+    } catch (e) {}
+
+    const embed = new EmbedBuilder()
+      .setTitle('Bot Update')
+      .setColor(0x87CEFA)
+      .setDescription(`Bot is online: **${client.user.tag}**`)
+      .addFields(
+        { name: 'Version', value: version, inline: true },
+        { name: 'Node', value: process.version, inline: true },
+        { name: 'Code Updated', value: codeUpdatedAt || 'unknown', inline: false }
+      )
+      .setTimestamp();
+    sendBotUpdate({ embeds: [embed] }).catch(() => {});
+  } catch (e) {}
   
   // Set the bot's presence to Do Not Disturb with custom status
   client.user.setPresence({
@@ -2235,6 +3236,167 @@ client.on('ready', () => {
   try { rescheduleAllReminders(); } catch (e) { console.error('rescheduleAllReminders failed', e); }
 
   // (removed debug startup lines)
+});
+
+// --- Server logs: roles/channels/server settings --------------------------------
+client.on('roleCreate', async (role) => {
+  try {
+    if (!role || !role.guild) return;
+    const { executorId } = await fetchAuditExecutor(role.guild, AuditLogEvent.RoleCreate, role.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Role created')
+      .setColor(0x2ECC71)
+      .addFields(
+        { name: 'Role', value: `${role.name} (<@&${role.id}>)`, inline: false },
+        { name: 'ID', value: String(role.id), inline: true },
+        { name: 'Color', value: role.hexColor || 'n/a', inline: true },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(role.guild, { embeds: [embed] });
+  } catch (e) { console.error('roleCreate server log failed', e); }
+});
+
+client.on('roleUpdate', async (oldRole, newRole) => {
+  try {
+    if (!newRole || !newRole.guild) return;
+    const changes = [];
+    try {
+      if (oldRole && oldRole.name !== newRole.name) changes.push(`Name: **${oldRole.name}** → **${newRole.name}**`);
+      if (oldRole && oldRole.hexColor !== newRole.hexColor) changes.push(`Color: **${oldRole.hexColor}** → **${newRole.hexColor}**`);
+      if (oldRole && !!oldRole.hoist !== !!newRole.hoist) changes.push(`Hoist: **${oldRole.hoist}** → **${newRole.hoist}**`);
+      if (oldRole && !!oldRole.mentionable !== !!newRole.mentionable) changes.push(`Mentionable: **${oldRole.mentionable}** → **${newRole.mentionable}**`);
+      if (oldRole && String(oldRole.permissions?.bitfield || '') !== String(newRole.permissions?.bitfield || '')) {
+        // show a small diff
+        const before = oldRole.permissions ? oldRole.permissions.toArray() : [];
+        const after = newRole.permissions ? newRole.permissions.toArray() : [];
+        const added = after.filter(p => !before.includes(p)).slice(0, 10);
+        const removed = before.filter(p => !after.includes(p)).slice(0, 10);
+        if (added.length) changes.push(`Perms added: ${added.join(', ')}`);
+        if (removed.length) changes.push(`Perms removed: ${removed.join(', ')}`);
+        if (!added.length && !removed.length) changes.push('Permissions changed');
+      }
+    } catch (e) {}
+
+    if (!changes.length) return;
+
+    const { executorId } = await fetchAuditExecutor(newRole.guild, AuditLogEvent.RoleUpdate, newRole.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Role updated')
+      .setColor(0xF1C40F)
+      .addFields(
+        { name: 'Role', value: `${newRole.name} (<@&${newRole.id}>)`, inline: false },
+        { name: 'ID', value: String(newRole.id), inline: true },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: true },
+        { name: 'Changes', value: changes.join('\n').substring(0, 1024), inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(newRole.guild, { embeds: [embed] });
+  } catch (e) { console.error('roleUpdate server log failed', e); }
+});
+
+client.on('roleDelete', async (role) => {
+  try {
+    if (!role || !role.guild) return;
+    const { executorId } = await fetchAuditExecutor(role.guild, AuditLogEvent.RoleDelete, role.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Role deleted')
+      .setColor(0xE74C3C)
+      .addFields(
+        { name: 'Role', value: `${role.name} (${role.id})`, inline: false },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(role.guild, { embeds: [embed] });
+  } catch (e) { console.error('roleDelete server log failed', e); }
+});
+
+client.on('channelCreate', async (channel) => {
+  try {
+    if (!channel || !channel.guild) return;
+    const { executorId } = await fetchAuditExecutor(channel.guild, AuditLogEvent.ChannelCreate, channel.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Channel created')
+      .setColor(0x2ECC71)
+      .addFields(
+        { name: 'Channel', value: `<#${channel.id}> (${channel.name || channel.id})`, inline: false },
+        { name: 'Type', value: String(channel.type), inline: true },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: true }
+      )
+      .setTimestamp();
+    await sendServerLog(channel.guild, { embeds: [embed] });
+  } catch (e) { console.error('channelCreate server log failed', e); }
+});
+
+client.on('channelUpdate', async (oldChannel, newChannel) => {
+  try {
+    if (!newChannel || !newChannel.guild) return;
+    const changes = [];
+    try {
+      if (oldChannel && oldChannel.name !== newChannel.name) changes.push(`Name: **${oldChannel.name}** → **${newChannel.name}**`);
+      if (typeof oldChannel?.parentId !== 'undefined' && oldChannel.parentId !== newChannel.parentId) changes.push(`Category: **${oldChannel.parentId || 'none'}** → **${newChannel.parentId || 'none'}**`);
+      if (typeof oldChannel?.rateLimitPerUser === 'number' && typeof newChannel?.rateLimitPerUser === 'number' && oldChannel.rateLimitPerUser !== newChannel.rateLimitPerUser) {
+        changes.push(`Slowmode: **${oldChannel.rateLimitPerUser}s** → **${newChannel.rateLimitPerUser}s**`);
+      }
+      if (typeof oldChannel?.nsfw !== 'undefined' && oldChannel.nsfw !== newChannel.nsfw) changes.push(`NSFW: **${oldChannel.nsfw}** → **${newChannel.nsfw}**`);
+      if (typeof oldChannel?.topic !== 'undefined' && oldChannel.topic !== newChannel.topic) changes.push('Topic changed');
+    } catch (e) {}
+    if (!changes.length) return;
+
+    const { executorId } = await fetchAuditExecutor(newChannel.guild, AuditLogEvent.ChannelUpdate, newChannel.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Channel updated')
+      .setColor(0xF1C40F)
+      .addFields(
+        { name: 'Channel', value: `<#${newChannel.id}> (${newChannel.name || newChannel.id})`, inline: false },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: true },
+        { name: 'Changes', value: changes.join('\n').substring(0, 1024), inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(newChannel.guild, { embeds: [embed] });
+  } catch (e) { console.error('channelUpdate server log failed', e); }
+});
+
+client.on('channelDelete', async (channel) => {
+  try {
+    if (!channel || !channel.guild) return;
+    const { executorId } = await fetchAuditExecutor(channel.guild, AuditLogEvent.ChannelDelete, channel.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Channel deleted')
+      .setColor(0xE74C3C)
+      .addFields(
+        { name: 'Channel', value: `${channel.name || channel.id} (${channel.id})`, inline: false },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(channel.guild, { embeds: [embed] });
+  } catch (e) { console.error('channelDelete server log failed', e); }
+});
+
+client.on('guildUpdate', async (oldGuild, newGuild) => {
+  try {
+    if (!newGuild) return;
+    const changes = [];
+    try {
+      if (oldGuild && oldGuild.name !== newGuild.name) changes.push(`Name: **${oldGuild.name}** → **${newGuild.name}**`);
+      if (typeof oldGuild?.verificationLevel !== 'undefined' && oldGuild.verificationLevel !== newGuild.verificationLevel) changes.push(`Verification: **${oldGuild.verificationLevel}** → **${newGuild.verificationLevel}**`);
+      if (typeof oldGuild?.explicitContentFilter !== 'undefined' && oldGuild.explicitContentFilter !== newGuild.explicitContentFilter) changes.push(`Content Filter: **${oldGuild.explicitContentFilter}** → **${newGuild.explicitContentFilter}**`);
+      if (typeof oldGuild?.mfaLevel !== 'undefined' && oldGuild.mfaLevel !== newGuild.mfaLevel) changes.push(`MFA Level: **${oldGuild.mfaLevel}** → **${newGuild.mfaLevel}**`);
+    } catch (e) {}
+    if (!changes.length) return;
+
+    const { executorId } = await fetchAuditExecutor(newGuild, AuditLogEvent.GuildUpdate, newGuild.id);
+    const embed = new EmbedBuilder()
+      .setTitle('Server updated')
+      .setColor(0xF1C40F)
+      .addFields(
+        { name: 'Server', value: `${newGuild.name} (${newGuild.id})`, inline: false },
+        { name: 'Executor', value: executorId ? `<@${executorId}> (${executorId})` : 'Unknown', inline: true },
+        { name: 'Changes', value: changes.join('\n').substring(0, 1024), inline: false }
+      )
+      .setTimestamp();
+    await sendServerLog(newGuild, { embeds: [embed] });
+  } catch (e) { console.error('guildUpdate server log failed', e); }
 });
 
 // Moderation / audit style event logs: member joins/leaves, voice join/leave, message deletions
@@ -2514,6 +3676,74 @@ async function sendLog(guild, payload) {
   }
 }
 
+async function getChannelById(channelId) {
+  try {
+    if (!channelId) return null;
+    const sid = String(channelId);
+    let target = client.channels.cache.get(sid) || null;
+    if (!target) target = await client.channels.fetch(sid).catch(() => null);
+    return target || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function getBotUpdatesChannelId() {
+  return DEFAULT_BOT_UPDATES_CHANNEL_ID;
+}
+
+function getServerLogsChannelId(guild) {
+  try {
+    const cfg = guild ? loadGuildConfig(guild.id) : null;
+    return (process.env.SERVER_LOGS_CHANNEL_ID || (cfg && cfg.serverLogsChannelId) || DEFAULT_SERVER_LOGS_CHANNEL_ID);
+  } catch (e) {
+    return DEFAULT_SERVER_LOGS_CHANNEL_ID;
+  }
+}
+
+async function sendBotUpdate(payload) {
+  try {
+    const ch = await getChannelById(getBotUpdatesChannelId());
+    if (!ch || !isTextLike(ch)) return false;
+    await ch.send(payload).catch(() => null);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function sendServerLog(guild, payload) {
+  try {
+    if (!guild) return false;
+    const chId = getServerLogsChannelId(guild);
+    const ch = await getChannelById(chId);
+    if (!ch || !isTextLike(ch)) return false;
+    // Safety: only log into that channel if it belongs to the same guild
+    if (ch.guild && String(ch.guild.id) !== String(guild.id)) return false;
+    await ch.send(payload).catch(() => null);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function fetchAuditExecutor(guild, type, targetId, windowMs = 20_000) {
+  try {
+    if (!guild || !type || !targetId) return { executorId: null, reason: null };
+    const logs = await guild.fetchAuditLogs({ type, limit: 6 }).catch(() => null);
+    const entry = logs && logs.entries
+      ? logs.entries.find(e => e && e.target && String(e.target.id) === String(targetId) && (Date.now() - e.createdTimestamp) < windowMs)
+      : null;
+    if (!entry) return { executorId: null, reason: null };
+    return {
+      executorId: entry.executor ? (entry.executor.id || null) : null,
+      reason: entry.reason || null
+    };
+  } catch (e) {
+    return { executorId: null, reason: null };
+  }
+}
+
 function isTextLike(ch) { return ch && (typeof ch.isTextBased === 'function' ? ch.isTextBased() : (ch.isText && ch.isText())); }
 
 function buildFooter(guild) {
@@ -2521,11 +3751,161 @@ function buildFooter(guild) {
   return { text: `Guild: ${guild.name} (${guild.id})` };
 }
 
+// Anti-raid basics: join-rate detection + new-account restriction
+const antiRaidJoinTimes = new Map(); // guildId -> number[] timestamps
+const antiRaidState = new Map(); // guildId -> { activeUntil: number, originalSlowmodes: Map<string, number>, timer: any }
+
+function getAntiRaidCfg(cfg) {
+  const ar = (cfg && cfg.antiRaid && typeof cfg.antiRaid === 'object') ? cfg.antiRaid : {};
+  return {
+    enabled: ar.enabled !== false,
+    windowSeconds: Number(ar.windowSeconds || 60),
+    maxJoins: Number(ar.maxJoins || 8),
+    slowmodeSeconds: Number(ar.slowmodeSeconds || 10),
+    slowmodeDurationMinutes: Number(ar.slowmodeDurationMinutes || 10),
+    slowmodeChannels: ar.slowmodeChannels || 'all', // 'all' or string[] channelIds
+    verificationRoleId: ar.verificationRoleId ? String(ar.verificationRoleId).replace(/[<@&>]/g, '') : null,
+    minAccountAgeDays: Number(ar.minAccountAgeDays || 3),
+    newAccountRoleId: ar.newAccountRoleId ? String(ar.newAccountRoleId).replace(/[<@&>]/g, '') : null,
+  };
+}
+
+async function enableRaidMode(guild, cfg) {
+  try {
+    if (!guild) return;
+    const anti = getAntiRaidCfg(cfg);
+    if (!anti.enabled) return;
+
+    const gid = String(guild.id);
+    const existing = antiRaidState.get(gid);
+    const now = Date.now();
+    const durationMs = Math.max(60_000, anti.slowmodeDurationMinutes * 60_000);
+    const activeUntil = now + durationMs;
+
+    if (existing && existing.activeUntil && existing.activeUntil > now) {
+      existing.activeUntil = activeUntil;
+      return;
+    }
+
+    const originalSlowmodes = new Map();
+    const shouldAll = anti.slowmodeChannels === 'all';
+    const allowIds = Array.isArray(anti.slowmodeChannels) ? anti.slowmodeChannels.map(String) : [];
+
+    const channels = guild.channels && guild.channels.cache ? Array.from(guild.channels.cache.values()) : [];
+    for (const ch of channels) {
+      try {
+        if (!ch) continue;
+        if (!isTextLike(ch)) continue;
+        if (typeof ch.setRateLimitPerUser !== 'function') continue;
+        if (!shouldAll && !allowIds.includes(String(ch.id))) continue;
+
+        const current = typeof ch.rateLimitPerUser === 'number' ? ch.rateLimitPerUser : 0;
+        originalSlowmodes.set(String(ch.id), current);
+        await ch.setRateLimitPerUser(anti.slowmodeSeconds, 'Anti-Raid: join spike detected').catch(() => {});
+      } catch (e) {}
+    }
+
+    const st = { activeUntil, originalSlowmodes, timer: null };
+    const scheduleDisable = () => {
+      const remaining = Math.max(1_000, (st.activeUntil || 0) - Date.now());
+      st.timer = setTimeout(async () => {
+        try {
+          const cur = antiRaidState.get(gid);
+          if (!cur) return;
+          if (Date.now() < cur.activeUntil) {
+            // extended; re-schedule using the updated timestamp
+            st.activeUntil = cur.activeUntil;
+            return scheduleDisable();
+          }
+          for (const [cid, prev] of cur.originalSlowmodes) {
+            try {
+              const ch = guild.channels.cache.get(cid) || await guild.channels.fetch(cid).catch(() => null);
+              if (ch && typeof ch.setRateLimitPerUser === 'function') {
+                await ch.setRateLimitPerUser(prev, 'Anti-Raid: raid mode ended').catch(() => {});
+              }
+            } catch (e) {}
+          }
+          antiRaidState.delete(gid);
+        } catch (e) {}
+      }, remaining);
+    };
+    scheduleDisable();
+    antiRaidState.set(gid, st);
+
+    // Log raid-mode activation as a modlog case
+    createModlogCase({
+      guild,
+      type: 'RaidMode',
+      userId: `guild:${guild.id}`,
+      moderatorId: 'AutoMod',
+      reason: `Join spike detected — slowmode ${anti.slowmodeSeconds}s for ${anti.slowmodeDurationMinutes}m` ,
+      durationMs
+    });
+  } catch (e) {}
+}
+
 client.on('guildMemberAdd', async (member) => {
   try {
     // Auto-assign member role
     const cfg = loadGuildConfig(member.guild.id);
+    const anti = getAntiRaidCfg(cfg);
     const joinTs = Math.floor(Date.now() / 1000);
+
+    // Anti-raid: join-rate detection
+    try {
+      if (anti.enabled) {
+        const gid = String(member.guild.id);
+        const now = Date.now();
+        const windowMs = Math.max(10_000, anti.windowSeconds * 1000);
+        const list = antiRaidJoinTimes.get(gid) || [];
+        list.push(now);
+        while (list.length && (now - list[0]) > windowMs) list.shift();
+        antiRaidJoinTimes.set(gid, list);
+        if (list.length >= anti.maxJoins) {
+          await enableRaidMode(member.guild, cfg);
+        }
+      }
+    } catch (e) {}
+
+    // Anti-raid: new-account restriction and raid-mode verification role
+    try {
+      if (anti.enabled) {
+        const now = Date.now();
+        const ageDays = (now - (member.user ? member.user.createdTimestamp : now)) / 86400000;
+        const raidActive = (() => {
+          const st = antiRaidState.get(String(member.guild.id));
+          return !!(st && st.activeUntil && st.activeUntil > now);
+        })();
+
+        const roleIdsToAdd = [];
+        if (anti.minAccountAgeDays > 0 && ageDays < anti.minAccountAgeDays) {
+          if (anti.newAccountRoleId) roleIdsToAdd.push(anti.newAccountRoleId);
+          else if (anti.verificationRoleId) roleIdsToAdd.push(anti.verificationRoleId);
+        }
+        if (raidActive && anti.verificationRoleId) {
+          if (!roleIdsToAdd.includes(anti.verificationRoleId)) roleIdsToAdd.push(anti.verificationRoleId);
+        }
+
+        for (const rid of roleIdsToAdd) {
+          try {
+            if (!rid) continue;
+            const role = member.guild.roles.cache.get(rid) || await member.guild.roles.fetch(rid).catch(() => null);
+            if (role && !member.roles.cache.has(role.id)) {
+              try {
+                await member.roles.add(role, 'Anti-Raid: verification/restriction on join');
+                createModlogCase({
+                  guild: member.guild,
+                  type: 'AutoRestrict',
+                  userId: member.id,
+                  moderatorId: 'AutoMod',
+                  reason: `Assigned role ${role.name} (${role.id}) on join (accountAge=${ageDays.toFixed(1)}d, raidActive=${raidActive})`
+                });
+              } catch (e) {}
+            }
+          } catch (e) {}
+        }
+      }
+    } catch (e) {}
     try {
       const memberRoleId = process.env.MEMBER_ROLE_ID || cfg.memberRoleId;
       const rid = memberRoleId ? String(memberRoleId).replace(/[<@&>]/g, '') : null;
@@ -2612,6 +3992,88 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
     if (!oldMember || !newMember) return;
     if (!newMember.guild) return;
 
+    // Track manual timeouts (right-click mute/unmute) and log to actions.md
+    try {
+      const oldTs = oldMember.communicationDisabledUntilTimestamp || 0;
+      const newTs = newMember.communicationDisabledUntilTimestamp || 0;
+      if (oldTs !== newTs) {
+        const now = Date.now();
+        const isTimedOut = !!newTs && newTs > now;
+
+        let moderatorId = null;
+        let reason = null;
+        try {
+          const logs = await newMember.guild.fetchAuditLogs({ type: AuditLogEvent.MemberUpdate, limit: 10 }).catch(() => null);
+          const entry = logs && logs.entries
+            ? logs.entries.find(e => {
+                try {
+                  if (!e || !e.target || String(e.target.id) !== String(newMember.id)) return false;
+                  if ((Date.now() - e.createdTimestamp) >= 20_000) return false;
+                  const changes = Array.isArray(e.changes) ? e.changes : [];
+                  return changes.some(c => c && String(c.key) === 'communication_disabled_until');
+                } catch (err) {
+                  return false;
+                }
+              })
+            : null;
+          if (entry) {
+            const ex = entry.executor;
+            if (ex) moderatorId = ex.id || null;
+            if (entry.reason) reason = entry.reason;
+          }
+        } catch (e) {}
+        if (!reason) reason = 'No reason provided';
+
+        // Avoid duplicates when the bot executed the mute/unmute command (that already created a case)
+        const dedupeType = isTimedOut ? 'Mute' : 'Unmute';
+        if (!hasRecentModAction(newMember.guild.id, dedupeType, newMember.id, moderatorId)) {
+          const nowTs = Math.floor(Date.now() / 1000);
+          const targetUser = newMember.user;
+          if (isTimedOut) {
+            const durationMs = (newTs - now);
+            const durationText = `${Math.max(1, Math.ceil(durationMs / 60000))} Minuten`;
+            const caseId = createModlogCase({
+              guild: newMember.guild,
+              type: 'Mute',
+              userId: newMember.id,
+              moderatorId,
+              reason,
+              durationMs
+            });
+            const embed = buildSmallModerationEmbed({
+              title: 'Nutzer gemutet (Timeout)',
+              targetId: newMember.id,
+              targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+              moderatorId,
+              reason,
+              caseId,
+              durationText,
+              nowTs
+            });
+            await sendLog(newMember.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+          } else {
+            const caseId = createModlogCase({
+              guild: newMember.guild,
+              type: 'Unmute',
+              userId: newMember.id,
+              moderatorId,
+              reason
+            });
+            const embed = buildSmallModerationEmbed({
+              title: 'Nutzer entmutet',
+              targetId: newMember.id,
+              targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+              moderatorId,
+              reason,
+              caseId,
+              nowTs
+            });
+            await sendLog(newMember.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {}
+
     const oldRoles = oldMember.roles ? oldMember.roles.cache : null;
     const newRoles = newMember.roles ? newMember.roles.cache : null;
     if (!oldRoles || !newRoles) return;
@@ -2644,28 +4106,44 @@ client.on('guildMemberRemove', async (member) => {
         ? banLogs.entries.find(e => e && e.target && String(e.target.id) === String(member.id) && (now - e.createdTimestamp) < 15000)
         : null;
       if (banEntry) {
-        // Ban is handled by guildBanAdd for a richer payload; skip leave logging
-        return;
-      }
+        // Ban is handled by guildBanAdd for a richer payload.
+        // Still continue so the normal leave message/log is posted (requested behavior).
+      } else {
+        const kickLogs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 6 }).catch(() => null);
+        const kickEntry = kickLogs && kickLogs.entries
+          ? kickLogs.entries.find(e => e && e.target && String(e.target.id) === String(member.id) && (now - e.createdTimestamp) < 15000)
+          : null;
 
-      const kickLogs = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 6 }).catch(() => null);
-      const kickEntry = kickLogs && kickLogs.entries
-        ? kickLogs.entries.find(e => e && e.target && String(e.target.id) === String(member.id) && (now - e.createdTimestamp) < 15000)
-        : null;
-
-      if (kickEntry) {
-        const nowTs = Math.floor(Date.now() / 1000);
-        const targetUser = member.user;
-        const embed = buildSmallModerationEmbed({
-          title: 'Member kicked',
-          targetId: member.id,
-          targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
-          moderatorId: kickEntry.executor ? kickEntry.executor.id : null,
-          reason: kickEntry.reason || '—',
-          nowTs
-        });
-        await sendLog(member.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
-        return;
+        if (kickEntry) {
+          // Right-click kick: create a modlog case + actions.md entry (deduped against prefix command)
+          let caseId = null;
+          try {
+            const dedupeType = 'Kick';
+            const moderatorId = kickEntry.executor ? (kickEntry.executor.id || null) : null;
+            if (!hasRecentModAction(member.guild.id, dedupeType, member.id, moderatorId)) {
+              caseId = createModlogCase({
+                guild: member.guild,
+                type: 'Kick',
+                userId: member.id,
+                moderatorId,
+                reason: kickEntry.reason || 'No reason provided'
+              });
+            }
+          } catch (e) {}
+          const nowTs = Math.floor(Date.now() / 1000);
+          const targetUser = member.user;
+          const embed = buildSmallModerationEmbed({
+            title: 'Member kicked',
+            targetId: member.id,
+            targetAvatarUrl: targetUser.displayAvatarURL({ extension: 'png', size: 256 }),
+            moderatorId: kickEntry.executor ? kickEntry.executor.id : null,
+            reason: kickEntry.reason || '—',
+            caseId,
+            nowTs
+          });
+          await sendLog(member.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+          // Continue so the normal leave message/log is also posted.
+        }
       }
     } catch (e) {}
 
@@ -2758,6 +4236,7 @@ client.on('guildBanAdd', async (ban) => {
     const nowTs = Math.floor(Date.now() / 1000);
 
     let moderatorId = null;
+    let moderatorTag = 'Unknown';
     let reason = ban.reason || null;
     try {
       const logs = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 6 }).catch(() => null);
@@ -2766,7 +4245,22 @@ client.on('guildBanAdd', async (ban) => {
         : null;
       if (entry) {
         moderatorId = entry.executor ? entry.executor.id : null;
+        if (entry.executor) moderatorTag = entry.executor.tag || entry.executor.username || entry.executor.id || moderatorTag;
         if (!reason && entry.reason) reason = entry.reason;
+      }
+    } catch (e) {}
+
+    // Right-click ban logging: create a case unless the bot just banned via command (dedupe)
+    let caseId = null;
+    try {
+      if (!hasRecentModAction(ban.guild.id, 'Ban', ban.user.id, moderatorId)) {
+        caseId = createModlogCase({
+          guild: ban.guild,
+          type: 'Ban',
+          userId: ban.user.id,
+          moderatorId: moderatorId,
+          reason: reason || 'No reason provided'
+        });
       }
     } catch (e) {}
 
@@ -2776,6 +4270,7 @@ client.on('guildBanAdd', async (ban) => {
       targetAvatarUrl: ban.user.displayAvatarURL({ extension: 'png', size: 256 }),
       moderatorId,
       reason: reason || '—',
+      caseId,
       nowTs
     });
     await sendLog(ban.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
@@ -2947,9 +4442,28 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     const guild = newState.guild || oldState.guild;
     if (!guild) return;
 
+    // Voice activity tracker (time in voice by member/channel)
+    try { voiceActivity.handleVoiceStateUpdate(oldState, newState); } catch (e) {}
+
+    // Join-to-create voice channels
+    try {
+      const didCreate = await handleJoinToCreateVoice(oldState, newState);
+      if (didCreate) return; // skip logging the trigger-channel join; the move will emit another event
+    } catch (e) {}
+
+    // Delete created channels when they become empty
+    try {
+      if (oldState && oldState.channelId && (!newState || String(newState.channelId || '') !== String(oldState.channelId))) {
+        const oldCh = oldState.channel;
+        if (oldCh && voiceCreateState && voiceCreateState.channels && voiceCreateState.channels[String(oldCh.id)]) {
+          await maybeDeleteCreatedVoiceChannel(oldCh);
+        }
+      }
+    } catch (e) {}
+
     // Prefer explicit voice log channel if configured (env or guild config), fallback to generic log
     const cfg = loadGuildConfig(guild.id);
-    const voiceLogChannelId = process.env.VOICE_LOG_CHANNEL_ID || cfg.voiceLogChannelId || '1465791613488988194';
+    const voiceLogChannelId = process.env.VOICE_LOG_CHANNEL_ID || cfg.voiceLogChannelId || '1466170115895591117';
     let logCh = voiceLogChannelId ? (guild.channels.cache.get(String(voiceLogChannelId)) || await guild.channels.fetch(String(voiceLogChannelId)).catch(()=>null)) : null;
     if (!logCh) logCh = findLogChannel(guild);
     if (!logCh || !isTextLike(logCh)) return;
@@ -3007,7 +4521,7 @@ client.on('messageDelete', async (message) => {
     try { if (message.partial) { const fetched = await message.fetch().catch(()=>null); if (fetched) { author = fetched.author; content = fetched.content; } } } catch(e){}
     const link = (guild && message.channelId) ? `https://discord.com/channels/${guild.id}/${message.channelId}/${message.id}` : 'n/a';
     const nowTs = Math.floor(Date.now() / 1000);
-    if (!count || count <= 0) return;
+    // removed erroneous check against undefined `count`
 
     const embed = new EmbedBuilder()
       .setTitle('Message deleted')
@@ -3021,6 +4535,43 @@ client.on('messageDelete', async (message) => {
         { name: 'Content', value: content ? content.substring(0, 700) : '—', inline: false }
       );
     await logCh.send({ embeds: [embed] }).catch(() => {});
+    // If this deleted message was an original announcement we tracked, cancel related posted summaries
+    try {
+      const deletedId = String(message.id || '');
+      for (const [postedId, data] of Array.from(sessionPostData.entries())) {
+        try {
+          if (String(data.originMessageId || '') === deletedId) {
+            // Attempt to fetch the channel/message where we posted the parsed summary
+            const postedChannel = data && data.originChannelId ? await client.channels.fetch(String(data.originChannelId)).catch(()=>null) : null;
+            let postedMsg = null;
+            if (postedChannel && typeof postedChannel.messages?.fetch === 'function') {
+              postedMsg = await postedChannel.messages.fetch(String(postedId)).catch(()=>null);
+            }
+            if (postedMsg) {
+              try {
+                // Edit embed to indicate cancellation and disable buttons
+                const emb = postedMsg.embeds && postedMsg.embeds[0] ? EmbedBuilder.from(postedMsg.embeds[0]) : new EmbedBuilder().setTitle('Session parsed').setColor(0x87CEFA);
+                emb.setDescription('Original announcement was deleted — sessions canceled.');
+                // build a disabled row with only Claim (disabled)
+                const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${postedId}`).setLabel('Claim').setStyle(ButtonStyle.Primary).setDisabled(true);
+                const comps = [claimBtn];
+                if (data.parsed && Array.isArray(data.parsed)) {
+                  for (const s of data.parsed.slice(0,10)) {
+                    const b = new ButtonBuilder().setCustomId(`session_announce:${postedId}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Secondary).setDisabled(true);
+                    comps.push(b);
+                  }
+                }
+                const row = new ActionRowBuilder().addComponents(...comps);
+                await postedMsg.edit({ embeds: [emb], components: [row] }).catch(()=>{});
+              } catch (ee) { /* ignore edit errors */ }
+            }
+            // cleanup in-memory/persisted records
+            try { sessionPostData.delete(String(postedId)); saveSessionPosts(); } catch (ee) {}
+            try { sessionClaims.delete(String(postedId)); saveClaims(); } catch (ee) {}
+          }
+        } catch (ee) {}
+      }
+    } catch (e) { console.error('failed to cancel sessions after original message delete', e); }
   } catch (e) { console.error('messageDelete log failed', e); }
 });
 
@@ -3072,6 +4623,19 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
       const editedContent = (newFetched && typeof newFetched.content === 'string') ? newFetched.content : '';
       const editedId = (newFetched && newFetched.id) || (oldFetched && oldFetched.id);
       if (editedId && editedContent) {
+        // If no prior parsed summary exists, trigger a fresh parse via messageCreate flow
+        try {
+          const existing = sessionOriginToPosted.get(String(editedId)) || Array.from(sessionPostData.values()).find(v => String(v.originMessageId || '') === String(editedId));
+          const channelId = (newFetched && newFetched.channelId) || (oldFetched && oldFetched.channelId);
+          const channelName = String(newFetched?.channel?.name || oldFetched?.channel?.name || '').toLowerCase();
+          const isWatched = channelId ? loadWatchChannels(guild.id).has(String(channelId)) : false;
+          const looksLikeSession = /\b\d+\s*[\.)-]\s*[0-2]?\d[:.][0-5]\d\s*(?:-|–|—|to)\s*[0-2]?\d[:.][0-5]\d\b|registration\s*opens|game\s*1\/3|duo\s*practice\s*session|<t:\d+:t>/i.test(editedContent);
+          const nameLooksLikeSession = /(alpha|beta|session|sessions|claim|claiming)/i.test(channelName);
+          if (!existing && (isWatched || (looksLikeSession && nameLooksLikeSession))) {
+            const seedMsg = Object.assign({}, newFetched || oldFetched, { content: editedContent, _isSeed: true });
+            try { client.emit('messageCreate', seedMsg); } catch (ee) {}
+          }
+        } catch (ee) {}
         for (const [postedId, data] of sessionPostData.entries()) {
           try {
             if (String(data.originMessageId || '') === String(editedId)) {
@@ -3092,17 +4656,8 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
                     if (lines.length) e.setDescription(lines.slice(0,12).join('\n'));
                     // rebuild components (announce buttons) preserving claim button and disabled state per session
                     try {
-                      const comps = [];
-                      const claimBtn = new ButtonBuilder().setCustomId(`session_claim:${postedId}`).setLabel('Claim').setStyle(ButtonStyle.Primary);
-                      comps.push(claimBtn);
-                      if (data.parsed && Array.isArray(data.parsed)) {
-                        for (const s of data.parsed.slice(0,10)) {
-                          const btn = new ButtonBuilder().setCustomId(`session_announce:${postedId}:${s.index}`).setLabel(`Announce S${s.index}`).setStyle(ButtonStyle.Success);
-                          comps.push(btn);
-                        }
-                      }
-                      const row = new ActionRowBuilder().addComponents(...comps);
-                      await postedMsg.edit({ embeds: [e], components: [row] }).catch(()=>{});
+                      const rows = buildSessionButtonRows(postedId, data.parsed || []);
+                      await postedMsg.edit({ embeds: [e], components: rows }).catch(()=>{});
                     } catch (ee) { /* ignore component rebuild errors */ }
                   }
                 }
@@ -3111,6 +4666,11 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
             }
           } catch (ee) { /* continue */ }
         }
+        try {
+          const channelId = (newFetched && newFetched.channelId) || (oldFetched && oldFetched.channelId);
+          const ch = channelId ? await client.channels.fetch(channelId).catch(()=>null) : null;
+          if (ch) await ensureParsedButtons(ch, newSessions || []);
+        } catch (ee) {}
       }
     } catch (e) { console.error('failed to propagate message edit to session embeds', e); }
   } catch (e) {
@@ -3160,16 +4720,29 @@ try {
 
 try {
   const interTicket = require('./events/interactionCreate.ticket.js');
-  if (interTicket && typeof interTicket.execute === 'function') client.on('interactionCreate', (interaction) => { try { interTicket.execute(interaction); } catch (err) { console.error('ticket interaction handler error', err); } });
-} catch (e) { console.error('Failed to load interactionCreate.ticket.js', e); }
-try {
-  const interTicket = require('./events/interactionCreate.ticket.js');
   if (interTicket && typeof interTicket.execute === 'function') client.on('interactionCreate', async (interaction) => { try { await interTicket.execute(interaction); } catch (err) { console.error('ticket interaction handler error', err); } });
 } catch (e) { console.error('Failed to load interactionCreate.ticket.js', e); }
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
   
+
+  // Prefix command: *va / *voiceactivity [1d|7d|30d]
+  try {
+    const rawVa = (message.content || '').trim();
+    if (message.guild && rawVa.startsWith(PREFIX)) {
+      const parts = rawVa.slice(PREFIX.length).trim().split(/\s+/);
+      const cmd = String(parts.shift() || '').toLowerCase();
+      if (cmd === 'va' || cmd === 'voiceactivity' || cmd === 'voice-activity') {
+        const range = String(parts.shift() || '7d').toLowerCase();
+        const embed = await voiceActivity.buildVoiceActivityEmbed(message.guild, { range, viewerId: message.author.id });
+        const components = voiceActivity.buildVoiceActivityComponents(range);
+        await message.channel.send({ embeds: [embed], components }).catch(() => null);
+        return;
+      }
+    }
+  } catch (e) { console.error('va prefix command failed', e); }
+
 
   // Prefix command: -dm / <PREFIX>dm  -> DMs a user with a purple embed
   // Usage: -dm @user <message>
@@ -3330,24 +4903,49 @@ client.on('messageCreate', async (message) => {
           try { await message.delete().catch(() => {}); } catch (e) {}
 
           const muteMs = Math.max(0, (cfg.muteMinutes || 2) * 60 * 1000);
-          const caseId = nextCase();
           const reason = inviteRe.test(message.content) ? 'Posting invite link' : 'Posting link';
-          modlogs.cases.push({ caseId, type: 'AutoMute', user: message.author.id, moderator: 'AutoMod', reason, durationMs: muteMs, time: Date.now(), guildId: message.guild ? message.guild.id : null });
-          saveJson(MODLOGS_PATH, modlogs);
 
-          try { await message.member.timeout(muteMs, `AutoMod: ${reason}`); } catch (e) { console.error('autmod timeout failed', e); }
-
-          appendActionMd(message.guild, 'AutoMod', 'AutoMute', `${message.author.tag} (${message.author.id}) muted for ${cfg.muteMinutes}m for: ${reason} in #${message.channel.name}`);
-
-          // Send a compact DM to the user (styled same as other mod DMs) and post the compact log in the log channel
+          let timedOut = false;
           try {
-            await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId, durationText: `${cfg.muteMinutes} minutes` });
-          } catch (e) {}
+            await message.member.timeout(muteMs, `AutoMod: ${reason}`);
+            timedOut = true;
+          } catch (e) {
+            timedOut = false;
+            console.error('autmod timeout failed', e);
+          }
+
+          const type = timedOut ? 'AutoMute' : 'AutoModDelete';
+          const caseId = createModlogCase({
+            guild: message.guild,
+            type,
+            userId: message.author.id,
+            moderatorId: 'AutoMod',
+            reason,
+            durationMs: timedOut ? muteMs : undefined,
+            extra: {
+              channelId: message.channel ? String(message.channel.id) : null,
+              messageId: message.id ? String(message.id) : null,
+              timedOut,
+            }
+          });
+
+          if (timedOut) markRecentModAction(message.guild?.id, 'Mute', message.author.id, 'AutoMod');
+
+          // Send a compact DM to the user (only if we actually timed out)
+          if (timedOut) {
+            try {
+              await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId, durationText: `${cfg.muteMinutes} minutes` });
+            } catch (e) {}
+          }
 
           try {
             const logChannel = message.guild.channels.cache.find(c => cfg.logChannelNames.includes(c.name));
             if (logChannel && logChannel.isText()) {
-              await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason}`, caseId)] }).catch(() => {});
+              if (timedOut) {
+                await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason}`, caseId)] }).catch(() => {});
+              } else {
+                await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-deleted a message from <@${message.author.id}> — Reason: ${reason}`, caseId)] }).catch(() => {});
+              }
             }
           } catch (e) {}
 
@@ -3491,10 +5089,21 @@ client.on('messageCreate', async (message) => {
         if (existingGuildEntry) {
           existingGuildEntry.moderator = message.author.id;
           existingGuildEntry.time = Date.now();
+          existingGuildEntry.reason = reason;
         } else {
-          blacklist.blacklisted.push({ id, type: 'guild', moderator: message.author.id, time: Date.now() });
+          blacklist.blacklisted.push({ id, type: 'guild', reason, moderator: message.author.id, time: Date.now() });
         }
         saveJson(BLACKLIST_PATH, blacklist);
+
+        // Unified modlog + actions.md
+        createModlogCase({
+          guild: message.guild,
+          type: 'GuildBlacklist',
+          userId: `guild:${id}`,
+          moderatorId: message.author.id,
+          reason,
+          extra: { guildId: id, guildName: maybeGuild.name }
+        });
 
         const embed = new EmbedBuilder()
           .setColor(0x87CEFA)
@@ -3551,6 +5160,16 @@ client.on('messageCreate', async (message) => {
         blacklist.blacklisted.push({ id, reason, moderator: message.author.id, time: Date.now(), banAttempts });
       }
       saveJson(BLACKLIST_PATH, blacklist);
+
+      // Unified modlog + actions.md
+      createModlogCase({
+        guild: message.guild,
+        type: 'Blacklist',
+        userId: id,
+        moderatorId: message.author.id,
+        reason,
+        extra: { success, failed }
+      });
 
       const embed = new EmbedBuilder()
         .setColor(0x87CEFA)
@@ -3716,6 +5335,17 @@ client.on('messageCreate', async (message) => {
       if (removed && removed.type === 'guild') {
         const maybeGuild = client.guilds.cache.get(id) || await client.guilds.fetch(id).catch(() => null);
         const serverLabel = maybeGuild ? `${maybeGuild.name} (${id})` : id;
+
+        // Unified modlog + actions.md
+        createModlogCase({
+          guild: message.guild,
+          type: 'GuildUnblacklist',
+          userId: `guild:${id}`,
+          moderatorId: message.author.id,
+          reason: `Removed from blacklist${removed && removed.reason ? ` (was: ${String(removed.reason).slice(0, 128)})` : ''}`,
+          extra: { guildId: id, guildName: maybeGuild ? maybeGuild.name : null }
+        });
+
         const embed = new EmbedBuilder()
           .setColor(0x87CEFA)
           .setTitle('Unblacklist')
@@ -3764,6 +5394,16 @@ client.on('messageCreate', async (message) => {
 
       const success = unbanAttempts.filter(a => a.ok).length;
       const failed = unbanAttempts.filter(a => !a.ok).length;
+
+      // Unified modlog + actions.md
+      createModlogCase({
+        guild: message.guild,
+        type: 'Unblacklist',
+        userId: id,
+        moderatorId: message.author.id,
+        reason: `Removed from blacklist; unban attempts: ${success} ok, ${failed} failed`,
+        extra: { success, failed }
+      });
 
       const embed = new EmbedBuilder()
         .setColor(0x87CEFA)
@@ -3887,6 +5527,7 @@ client.on('messageCreate', async (message) => {
   // Public modlog viewer: *md <user> [page]
   if (message.content.startsWith('*md') || message.content.startsWith('*mds')) {
     try {
+      reloadModlogs();
       const parts = message.content.slice(1).trim().split(/\s+/);
       // parts[0] is md or mds
       const cmd = parts[0].toLowerCase();
@@ -3897,23 +5538,37 @@ client.on('messageCreate', async (message) => {
       const uid = (userArg || '').replace(/[<@!>]/g, '').trim();
       const targetId = uid || message.author.id;
 
-      // Decide whether to show only this guild's logs, unless target is blacklisted
-      const isBlacklisted = isUserBlacklisted(targetId);
-      let cases = (modlogs && modlogs.cases) ? Array.from(modlogs.cases) : [];
-      if (!isBlacklisted) {
-        cases = cases.filter(c => String(c.user) === String(targetId) && String(c.guildId) === String(message.guild ? message.guild.id : ''));
-      } else {
-        cases = cases.filter(c => String(c.user) === String(targetId));
+      // Only show logs for the server where *md is executed
+      if (!message.guild) {
+        return message.channel.send({ embeds: [createChannelConfirmEmbed('Dieses Kommando kann nur auf einem Server verwendet werden.')] });
       }
+      const currentGuildId = String(message.guild.id);
 
-      if (!cases.length) return message.channel.send({ embeds: [createChannelConfirmEmbed('No modlogs found for that user in this server.')] });
-      const start = (pageArg - 1) * perPage;
+      let cases = (modlogs && modlogs.cases) ? Array.from(modlogs.cases) : [];
+      cases = cases.filter(c => String(c.user) === String(targetId) && c.guildId && String(c.guildId) === currentGuildId);
+
+      // Latest first
+      cases.sort((a, b) => {
+        const ta = Number(a && a.time ? a.time : 0);
+        const tb = Number(b && b.time ? b.time : 0);
+        if (tb !== ta) return tb - ta;
+        return Number(b && b.caseId ? b.caseId : 0) - Number(a && a.caseId ? a.caseId : 0);
+      });
+      
+      if (!cases.length) return message.channel.send({ embeds: [createChannelConfirmEmbed('No modlogs found for that user.')] });
+
+      const totalPages = Math.max(1, Math.ceil(cases.length / perPage));
+      const page = Math.max(1, Math.min(totalPages, pageArg));
+      const start = (page - 1) * perPage;
       const pageCases = cases.slice(start, start + perPage);
-      const embed = new EmbedBuilder().setTitle(`Modlogs for ${targetId}`).setColor(0x87CEFA).setTimestamp();
+      const embed = new EmbedBuilder()
+        .setTitle(`Modlogs for ${targetId}`)
+        .setColor(0x87CEFA)
+        .setTimestamp()
+        .setDescription(`Server: **${message.guild.name}** (${currentGuildId})`);
       for (const c of pageCases) {
         const ts = c.time ? Math.floor(Number(c.time)/1000) : null;
         const date = ts ? `<t:${ts}:f>` : '';
-        const guildInfo = c.guildId ? ` (Guild: ${c.guildId})` : '';
 
         // Build moderator display: prefer username + id when available, avoid pinging
         let moderatorDisplay = 'Unknown';
@@ -3932,9 +5587,9 @@ client.on('messageCreate', async (message) => {
         const typeLine = `Type: ${String(c.type || 'Unknown')}${dur}`;
         const reasonLine = `Reason: ${String(c.reason || '—')}${date ? ' - ' + date : ''}`;
 
-        embed.addFields({ name: `Case ${c.caseId}${guildInfo}`, value: `${typeLine}\nModerator: ${moderatorDisplay}\n${reasonLine}`, inline: false });
+        embed.addFields({ name: `Case ${c.caseId}`, value: `${typeLine}\nModerator: ${moderatorDisplay}\n${reasonLine}`, inline: false });
       }
-      embed.setFooter({ text: `Page ${pageArg} — Showing ${pageCases.length} of ${cases.length}` });
+      embed.setFooter({ text: `Page ${page}/${totalPages} — Showing ${pageCases.length} of ${cases.length}` });
       return message.channel.send({ embeds: [embed] });
     } catch (e) { console.error('md viewer failed', e); }
   }
@@ -3944,6 +5599,9 @@ client.on('messageCreate', async (message) => {
     if (!cmd) return;
     // Permission: require ManageGuild
     if (!message.member.permissions.has(PermissionsBitField.Flags.ManageGuild)) return;
+
+    // Always operate on persisted data for admin edits.
+    reloadModlogs();
 
     if (cmd.toLowerCase() === 'reason') {
       const caseId = parseInt(rest[0], 10);
@@ -3984,6 +5642,42 @@ client.on('messageCreate', async (message) => {
         }
       } catch (e) {}
       return message.channel.send({ embeds: [createChannelConfirmEmbed(`Updated duration for case ${caseId} to ${humanDuration(ms)}`, caseId)] });
+    }
+
+    if (cmd.toLowerCase() === 'dcase' || cmd.toLowerCase() === 'delcase' || cmd.toLowerCase() === 'deletecase') {
+      const caseId = parseInt(rest[0], 10);
+      if (!caseId) return replyAsEmbed(message, 'Usage: *dcase <caseId>');
+      if (!modlogs || typeof modlogs !== 'object') modlogs = { lastCase: 10000, cases: [] };
+      if (!Array.isArray(modlogs.cases)) modlogs.cases = [];
+
+      const idx = modlogs.cases.findIndex(x => Number(x && x.caseId) === Number(caseId));
+      if (idx === -1) return replyAsEmbed(message, `Case ${caseId} not found.`);
+
+      const c = modlogs.cases[idx];
+      // Safety: if case has a guildId, only allow deletion from within that same guild.
+      if (message.guild && c && c.guildId && String(c.guildId) !== String(message.guild.id)) {
+        return replyAsEmbed(message, `Case ${caseId} belongs to another guild (${c.guildId}) and can't be deleted here.`);
+      }
+
+      modlogs.cases.splice(idx, 1);
+      saveJson(MODLOGS_PATH, modlogs);
+
+      // Optional: log the deletion to moderation logs
+      try {
+        const nowTs = Math.floor(Date.now() / 1000);
+        const embed = buildSmallModerationEmbed({
+          title: 'Case gelöscht',
+          targetId: c && c.user ? String(c.user) : null,
+          targetAvatarUrl: null,
+          moderatorId: message.author.id,
+          reason: `Deleted case ${caseId}${c && c.type ? ` (${c.type})` : ''}`,
+          caseId,
+          nowTs
+        });
+        await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+      } catch (e) {}
+
+      return message.channel.send({ embeds: [createChannelConfirmEmbed(`Deleted case ${caseId}`, caseId, c && c.user ? String(c.user) : null)] });
     }
 
     if (cmd.toLowerCase() === 'moderations') {
@@ -4062,6 +5756,108 @@ client.on('messageCreate', async (message) => {
   if (!message.content.startsWith(PREFIX)) return;
   const [raw, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = raw.toLowerCase();
+
+  // Re-ban all currently banned users and log to modlogs (*md)
+  if (command === 'allban' || command === 'rebanall' || command === 'reban') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
+    if (!message.guild) return replyAsEmbed(message, 'Dieses Kommando kann nur auf einem Server verwendet werden.');
+
+    const reason = 'Perm';
+    let total = 0;
+    let ok = 0;
+    let failed = 0;
+    let pruned = 0;
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    try {
+      const bans = await message.guild.bans.fetch().catch(() => null);
+      const list = bans ? Array.from(bans.values()) : [];
+      total = list.length;
+      if (!total) return replyAsEmbed(message, 'Keine gebannten User gefunden.');
+
+      await replyAsEmbed(message, `Starte *allban für ${total} bereits gebannte User… (Reason: ${reason})`);
+
+      for (const b of list) {
+        const uid = b && b.user ? b.user.id : null;
+        if (!uid) { failed++; continue; }
+
+        // Prevent double logging from audit/event handlers during bulk actions
+        markRecentModAction(message.guild.id, 'Unban', uid, '*');
+        markRecentModAction(message.guild.id, 'Ban', uid, '*');
+
+        try {
+          // Unban first, then ban again so audit-log reason becomes exactly "Perm".
+          await message.guild.bans.remove(uid, reason).catch(() => {});
+          await sleep(900);
+          await message.guild.members.ban(uid, { reason }).catch(() => { throw new Error('ban failed'); });
+
+          // Prune modlogs for this user in this guild so only one case remains
+          try {
+            const gid = String(message.guild.id);
+            const beforeLen = Array.isArray(modlogs.cases) ? modlogs.cases.length : 0;
+            modlogs.cases = (Array.isArray(modlogs.cases) ? modlogs.cases : []).filter(c => {
+              try {
+                if (!c) return false;
+                if (String(c.user || '') !== String(uid)) return true;
+                if (!c.guildId) return true; // safety: don't delete cases without guildId
+                return String(c.guildId) !== gid;
+              } catch (e) {
+                return true;
+              }
+            });
+            const afterLen = modlogs.cases.length;
+            if (afterLen !== beforeLen) pruned += (beforeLen - afterLen);
+
+            const caseId = createModlogCase({
+              guild: message.guild,
+              type: 'Ban',
+              userId: uid,
+              moderatorId: message.author.id,
+              reason
+            });
+
+            // Dedupe against guildBanAdd audit executor = bot
+            markRecentModAction(message.guild.id, 'Ban', uid, '*');
+            // Ensure file state is consistent after prune + insert
+            saveJson(MODLOGS_PATH, modlogs);
+            // createModlogCase already wrote actions.md
+
+          } catch (e) {}
+
+          ok++;
+        } catch (e) {
+          failed++;
+        }
+
+        // Gentle pacing to avoid rate limits
+        await sleep(900);
+      }
+    } catch (e) {
+      return replyAsEmbed(message, 'allban fehlgeschlagen.');
+    }
+
+    return replyAsEmbed(message, `allban abgeschlossen. Gebannte (vorher): ${total}, Erfolg: ${ok}, Fehler: ${failed}, Gelöschte Cases (nur diese Guild): ${pruned}.`);
+  }
+
+  // Member count command
+  if (command === 'membercount' || command === 'mc') {
+    if (!message.guild) return replyAsEmbed(message, 'Dieses Kommando kann nur auf einem Server verwendet werden.');
+    const total = message.guild.memberCount || 0;
+    const bots = message.guild.members?.cache?.filter(m => m.user?.bot).size || 0;
+    const humans = Math.max(0, total - bots);
+    const embed = new EmbedBuilder()
+      .setTitle('Member Count')
+      .setColor(0x87CEFA)
+      .addFields(
+        { name: 'Total', value: String(total), inline: true },
+        { name: 'Humans', value: String(humans), inline: true },
+        { name: 'Bots', value: String(bots), inline: true }
+      )
+      .setTimestamp()
+      .setFooter(buildFooter(message.guild));
+    return message.channel.send({ embeds: [embed] });
+  }
 
   // Intentionally do not log every command execution (e.g. !say).
   // Moderation commands create their own dedicated moderation logs.
@@ -4796,6 +6592,76 @@ client.on('messageCreate', async (message) => {
     }
   }
 
+  // Unified modlog lookup commands
+  if (command === 'case') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return;
+    const raw = args[0];
+    const cid = parseInt(String(raw || '').replace(/[^0-9]/g, ''), 10);
+    if (!cid) return replyAsEmbed(message, 'Usage: *case <id>');
+    const found = (modlogs && Array.isArray(modlogs.cases) ? modlogs.cases : [])
+      .find(c => c && Number(c.caseId) === Number(cid) && (!message.guild || !c.guildId || String(c.guildId) === String(message.guild.id)));
+    if (!found) return replyAsEmbed(message, `Case #${cid} not found.`);
+
+    const when = found.time ? formatHammertime(found.time) : 'n/a';
+    const moderator = found.moderator
+      ? (/^\d+$/.test(String(found.moderator)) ? `<@${found.moderator}> (${found.moderator})` : String(found.moderator))
+      : 'n/a';
+    const userLine = found.user ? `<@${found.user}> (${found.user})` : 'n/a';
+    const reason = found.reason || 'No reason provided';
+    const duration = typeof found.durationMs === 'number' ? humanDuration(found.durationMs) : null;
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Case #${found.caseId} — ${found.type || 'Unknown'}`)
+      .setColor(0x87CEFA)
+      .addFields(
+        { name: 'User', value: userLine, inline: true },
+        { name: 'Moderator', value: moderator, inline: true },
+        { name: 'When', value: when, inline: true },
+        { name: 'Reason', value: String(reason).substring(0, 1024), inline: false }
+      )
+      .setTimestamp();
+    if (duration) embed.addFields({ name: 'Duration', value: duration, inline: true });
+    return message.channel.send({ embeds: [embed] });
+  }
+
+  if (command === 'cases') {
+    if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return;
+    const targetArg = args[0];
+    const pageArg = parseInt(args[1], 10) || 1;
+    const targetId = parseId(targetArg) || (targetArg ? targetArg.replace(/[<@!>]/g, '') : null);
+    if (!targetId || !/^\d+$/.test(String(targetId))) return replyAsEmbed(message, 'Usage: *cases <user|id> [page]');
+
+    const itemsPerPage = 8;
+    const all = (modlogs && Array.isArray(modlogs.cases) ? modlogs.cases : [])
+      .filter(c => c && String(c.user) === String(targetId) && (!message.guild || !c.guildId || String(c.guildId) === String(message.guild.id)))
+      .sort((a, b) => (b.time || 0) - (a.time || 0));
+    if (!all.length) return replyAsEmbed(message, 'No modlogs found for that user.');
+
+    const totalPages = Math.max(1, Math.ceil(all.length / itemsPerPage));
+    const page = Math.max(1, Math.min(totalPages, pageArg));
+    const slice = all.slice((page - 1) * itemsPerPage, page * itemsPerPage);
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Modlogs — ${targetId}`)
+      .setColor(0x87CEFA)
+      .setFooter({ text: `Page ${page}/${totalPages} • Total: ${all.length}` })
+      .setTimestamp();
+
+    for (const c of slice) {
+      const when = c.time ? formatHammertime(c.time) : 'n/a';
+      const mod = c.moderator
+        ? (/^\d+$/.test(String(c.moderator)) ? `<@${c.moderator}> (${c.moderator})` : String(c.moderator))
+        : 'n/a';
+      const reason = (c.reason || 'No reason provided').toString().substring(0, 200);
+      const dur = typeof c.durationMs === 'number' ? ` • ${humanDuration(c.durationMs)}` : '';
+      embed.addFields({
+        name: `#${c.caseId} — ${c.type || 'Unknown'}${dur}`,
+        value: `Mod: ${mod}\nWhen: ${when}\nReason: ${reason}`.substring(0, 1024)
+      });
+    }
+    return message.channel.send({ embeds: [embed] });
+  }
+
   if (command === 'warn') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return;
     const targetArg = args[0];
@@ -4805,8 +6671,11 @@ client.on('messageCreate', async (message) => {
 
     const caseId = nextCase();
     // Record modlog
-    modlogs.cases.push({ caseId, type: 'Warn', user: targetUser.id, moderator: message.author.id, reason, time: Date.now(), guildId: message.guild ? message.guild.id : null });
+    const whenTs = Date.now();
+    modlogs.cases.push({ caseId, type: 'Warn', user: targetUser.id, moderator: message.author.id, reason, time: whenTs, guildId: message.guild ? message.guild.id : null });
     saveJson(MODLOGS_PATH, modlogs);
+    writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Warn', userId: targetUser.id, moderatorId: message.author.id, reason, whenTs });
+    markRecentModAction(message.guild?.id, 'Warn', targetUser.id, message.author.id);
 
     // DM the user
     await sendModEmbedToUser(targetUser, 'Warn', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
@@ -4833,23 +6702,31 @@ client.on('messageCreate', async (message) => {
   if (command === 'ban') {
     if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
     const targetArg = args[0];
-    const reason = args.slice(1).join(' ') || 'No reason provided';
+    const reason = ensurePermBanReason(args.slice(1).join(' ') || 'No reason provided');
     const id = parseId(targetArg) || targetArg;
     if (!id) return message.channel.send({ embeds: [createChannelConfirmEmbed('Please provide a mention or user ID to ban.')] });
 
-    const caseId = nextCase();
-    modlogs.cases.push({ caseId, type: 'Ban', user: id, moderator: message.author.id, reason, time: Date.now(), guildId: message.guild ? message.guild.id : null });
-    saveJson(MODLOGS_PATH, modlogs);
-
-    // Try DM before ban
-    try {
-      const user = await client.users.fetch(id).catch(() => null);
-      if (user) await sendModEmbedToUser(user, 'Ban', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
-    } catch (e) {}
+    // Mark first so audit-log based handlers (executor = bot) don't create a duplicate case.
+    markRecentModAction(message.guild?.id, 'Ban', id, message.author.id);
+    markRecentModAction(message.guild?.id, 'Ban', id, '*');
 
     // Ban in guild
     try {
       await message.guild.members.ban(id, { reason: `${message.author.tag}: ${reason}` });
+
+      // Record modlog only on success
+      const caseId = nextCase();
+      const whenTs = Date.now();
+      modlogs.cases.push({ caseId, type: 'Ban', user: id, moderator: message.author.id, reason, time: whenTs, guildId: message.guild ? message.guild.id : null });
+      saveJson(MODLOGS_PATH, modlogs);
+      writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Ban', userId: id, moderatorId: message.author.id, reason, whenTs });
+
+      // DM after ban (avoid sending a caseId that won't exist if the ban fails)
+      try {
+        const user = await client.users.fetch(id).catch(() => null);
+        if (user) await sendModEmbedToUser(user, 'Ban', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
+      } catch (e) {}
+
       try {
         const nowTs = Math.floor(Date.now() / 1000);
         const targetUser = await client.users.fetch(id).catch(() => null);
@@ -4877,12 +6754,12 @@ client.on('messageCreate', async (message) => {
           targetAvatarUrl: targetUser ? targetUser.displayAvatarURL({ extension: 'png', size: 256 }) : null,
           moderatorId: message.author.id,
           reason: String(e.message || e),
-          caseId,
+          caseId: null,
           nowTs
         });
         await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
       } catch (err) { console.error('ban failure log failed', err); }
-      return message.channel.send({ embeds: [createChannelConfirmEmbed('Failed to ban user — maybe invalid ID or lack of permissions.', caseId, id)] });
+      return message.channel.send({ embeds: [createChannelConfirmEmbed('Failed to ban user — maybe invalid ID or lack of permissions.', null, id)] });
     }
   }
 
@@ -4893,19 +6770,27 @@ client.on('messageCreate', async (message) => {
     const id = parseId(targetArg) || targetArg;
     if (!id) return message.channel.send({ embeds: [createChannelConfirmEmbed('Please provide a mention or user ID to kick.')] });
 
-    const caseId = nextCase();
-    modlogs.cases.push({ caseId, type: 'Kick', user: id, moderator: message.author.id, reason, time: Date.now(), guildId: message.guild ? message.guild.id : null });
-    saveJson(MODLOGS_PATH, modlogs);
-
-    // Try DM before kick
-    try {
-      const user = await client.users.fetch(id).catch(() => null);
-      if (user) await sendModEmbedToUser(user, 'Kick', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
-    } catch (e) {}
+    // Mark first so audit-log based handlers (executor = bot) don't create a duplicate case.
+    markRecentModAction(message.guild?.id, 'Kick', id, message.author.id);
+    markRecentModAction(message.guild?.id, 'Kick', id, '*');
 
     // Kick in guild
     try {
       await message.guild.members.kick(id, `${message.author.tag}: ${reason}`);
+
+      // Record modlog only on success
+      const caseId = nextCase();
+      const whenTs = Date.now();
+      modlogs.cases.push({ caseId, type: 'Kick', user: id, moderator: message.author.id, reason, time: whenTs, guildId: message.guild ? message.guild.id : null });
+      saveJson(MODLOGS_PATH, modlogs);
+      writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Kick', userId: id, moderatorId: message.author.id, reason, whenTs });
+
+      // DM after kick (avoid sending a caseId that won't exist if the kick fails)
+      try {
+        const user = await client.users.fetch(id).catch(() => null);
+        if (user) await sendModEmbedToUser(user, 'Kick', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
+      } catch (e) {}
+
       try {
         const nowTs = Math.floor(Date.now() / 1000);
         const targetUser = await client.users.fetch(id).catch(() => null);
@@ -4933,12 +6818,12 @@ client.on('messageCreate', async (message) => {
           targetAvatarUrl: targetUser ? targetUser.displayAvatarURL({ extension: 'png', size: 256 }) : null,
           moderatorId: message.author.id,
           reason: String(e.message || e),
-          caseId,
+          caseId: null,
           nowTs
         });
         await sendLog(message.guild, { embeds: [embed], category: 'moderation' });
       } catch (err) { console.error('kick failure log failed', err); }
-      return message.channel.send({ embeds: [createChannelConfirmEmbed('Failed to kick user — maybe invalid ID or lack of permissions.', caseId, id)] });
+      return message.channel.send({ embeds: [createChannelConfirmEmbed('Failed to kick user — maybe invalid ID or lack of permissions.', null, id)] });
     }
   }
 
@@ -4950,8 +6835,11 @@ client.on('messageCreate', async (message) => {
     try {
       await message.guild.bans.remove(id, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Unban', user: id, moderator: message.author.id, reason, time: Date.now(), guildId: message.guild ? message.guild.id : null });
+      const whenTs = Date.now();
+      modlogs.cases.push({ caseId, type: 'Unban', user: id, moderator: message.author.id, reason, time: whenTs, guildId: message.guild ? message.guild.id : null });
       saveJson(MODLOGS_PATH, modlogs);
+      writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Unban', userId: id, moderatorId: message.author.id, reason, whenTs });
+      markRecentModAction(message.guild?.id, 'Unban', id, message.author.id);
 
       // DM the user if possible
       const user = await client.users.fetch(id).catch(() => null);
@@ -5001,8 +6889,13 @@ client.on('messageCreate', async (message) => {
     try {
       await member.timeout(duration, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Mute', user: member.id, moderator: message.author.id, reason, durationMs: duration, time: Date.now(), guildId: message.guild ? message.guild.id : null });
+      const whenTs = Date.now();
+      modlogs.cases.push({ caseId, type: 'Mute', user: member.id, moderator: message.author.id, reason, durationMs: duration, time: whenTs, guildId: message.guild ? message.guild.id : null });
       saveJson(MODLOGS_PATH, modlogs);
+      writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Mute', userId: member.id, moderatorId: message.author.id, reason, whenTs });
+      markRecentModAction(message.guild?.id, 'Mute', member.id, message.author.id);
+      // Also mark a wildcard so audit-log based handlers (executor = bot) don't create a duplicate case.
+      markRecentModAction(message.guild?.id, 'Mute', member.id, '*');
 
       // DM user
       await sendModEmbedToUser(member.user, 'Mute', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId, durationText: `${minutes} minutes` });
@@ -5050,8 +6943,13 @@ client.on('messageCreate', async (message) => {
     try {
       await member.timeout(null, `${message.author.tag}: ${reason}`);
       const caseId = nextCase();
-      modlogs.cases.push({ caseId, type: 'Unmute', user: member.id, moderator: message.author.id, reason, time: Date.now(), guildId: message.guild ? message.guild.id : null });
+      const whenTs = Date.now();
+      modlogs.cases.push({ caseId, type: 'Unmute', user: member.id, moderator: message.author.id, reason, time: whenTs, guildId: message.guild ? message.guild.id : null });
       saveJson(MODLOGS_PATH, modlogs);
+      writeModlogCaseToMd({ guild: message.guild, caseId, type: 'Unmute', userId: member.id, moderatorId: message.author.id, reason, whenTs });
+      markRecentModAction(message.guild?.id, 'Unmute', member.id, message.author.id);
+      // Also mark a wildcard so audit-log based handlers (executor = bot) don't create a duplicate case.
+      markRecentModAction(message.guild?.id, 'Unmute', member.id, '*');
 
       await sendModEmbedToUser(member.user, 'Unmute', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
 
@@ -5236,7 +7134,14 @@ client.on('messageCreate', async (message) => {
         if (resp === 'y' || resp === 'yes') {
           try {
             await channel.delete(`${message.author.tag}: requested by command`);
-            appendActionMd(message.guild, message.author.tag, 'Channel Deleted', `Deleted channel ${channel.name} (${channel.id})`);
+            createModlogCase({
+              guild: message.guild,
+              type: 'ChannelDelete',
+              userId: channel.id,
+              moderatorId: message.author.id,
+              reason: `Deleted channel ${channel.name} (${channel.id})`,
+              extra: { channelId: channel.id, channelName: channel.name }
+            });
               // send log
               try {
                 const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
@@ -5254,7 +7159,6 @@ client.on('messageCreate', async (message) => {
               return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Deleted channel ${channel.name}`)] });
           } catch (e) {
             console.error('delete channel error', e);
-            appendActionMd(message.guild, message.author.tag, 'Channel Deletion Failed', `Failed to delete ${channel.name} (${channel.id}) — ${String(e)}`);
             try {
               const embed = new EmbedBuilder().setTitle('Channel deletion failed').setColor(0xE74C3C)
                 .setDescription(`Failed to delete channel ${channel.name} (${channel.id})`)
@@ -5308,6 +7212,18 @@ client.on('messageCreate', async (message) => {
           }
           await new Promise(r => setTimeout(r, 60));
         }
+
+        // Unified modlog + actions.md (single summary case)
+        if (success > 0) {
+          createModlogCase({
+            guild: message.guild,
+            type: 'RoleBulkAssign',
+            userId: `role:${role.id}`,
+            moderatorId: message.author.id,
+            reason: `Bulk assigned role ${role.name} (${role.id}) — success=${success}, failed=${failed}`,
+            extra: { roleId: role.id, roleName: role.name, success, failed }
+          });
+        }
         return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Bulk complete: assigned to ${success}, failed ${failed}.`)] });
       }
 
@@ -5323,7 +7239,14 @@ client.on('messageCreate', async (message) => {
 
       try {
         await member.roles.add(role, `${message.author.tag}: assigned via command`);
-        appendActionMd(message.guild, message.author.tag, 'Role Assigned', `Assigned role ${role.name} (${role.id}) to ${member.user.tag} (${member.id})`);
+        createModlogCase({
+          guild: message.guild,
+          type: 'RoleAssigned',
+          userId: member.id,
+          moderatorId: message.author.id,
+          reason: `Assigned role ${role.name} (${role.id}) to ${member.user.tag} (${member.id})`,
+          extra: { roleId: role.id, roleName: role.name }
+        });
         try {
           const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
           if (message.guild && cfg.logChannelId) {
@@ -5344,7 +7267,6 @@ client.on('messageCreate', async (message) => {
         return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Assigned role **${role.name}** to ${member.user.tag}`)] });
       } catch (e) {
         console.error('role assign error', e);
-        appendActionMd(message.guild, message.author.tag, 'Role Assignment Failed', `Failed to assign role ${role ? role.name : '(unknown)'} to ${member ? member.user.tag : '(unknown)'} — ${String(e)}`);
         try {
           const embed = new EmbedBuilder().setTitle('Role assignment failed').setColor(0x87CEFA)
             .addFields(
@@ -5445,6 +7367,18 @@ client.on('messageCreate', async (message) => {
         }
         await new Promise(r => setTimeout(r, 60));
       }
+
+      // Unified modlog + actions.md (single summary case)
+      if (success > 0) {
+        createModlogCase({
+          guild: message.guild,
+          type: 'RoleBulkRemove',
+          userId: `role:${role.id}`,
+          moderatorId: message.author.id,
+          reason: `Bulk removed role ${role.name} (${role.id}) — success=${success}, failed=${failed}`,
+          extra: { roleId: role.id, roleName: role.name, success, failed }
+        });
+      }
       return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Bulk complete: removed from ${success}, failed ${failed}.`)] });
     }
 
@@ -5459,7 +7393,14 @@ client.on('messageCreate', async (message) => {
 
     try {
       await member.roles.remove(role, `${message.author.tag}: removed via command`);
-      appendActionMd(message.guild, message.author.tag, 'Role Removed', `Removed role ${role.name} (${role.id}) from ${member.user.tag} (${member.id})`);
+      createModlogCase({
+        guild: message.guild,
+        type: 'RoleRemoved',
+        userId: member.id,
+        moderatorId: message.author.id,
+        reason: `Removed role ${role.name} (${role.id}) from ${member.user.tag} (${member.id})`,
+        extra: { roleId: role.id, roleName: role.name }
+      });
       try {
         const cfg = loadJson(path.join(DATA_DIR, 'config.json'), {});
         if (message.guild && cfg.logChannelId) {
@@ -5480,7 +7421,6 @@ client.on('messageCreate', async (message) => {
       return message.channel.send({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Removed role **${role.name}** from ${member.user.tag}`)] });
     } catch (e) {
       console.error('role remove error', e);
-      appendActionMd(message.guild, message.author.tag, 'Role Remove Failed', `Failed to remove role ${role ? role.name : '(unknown)'} from ${member ? member.user.tag : '(unknown)'} — ${String(e)}`);
       try {
         const embed = new EmbedBuilder().setTitle('Role removal failed').setColor(0x87CEFA)
           .addFields(
@@ -5496,6 +7436,78 @@ client.on('messageCreate', async (message) => {
   } catch (e) {
     console.error('derole command failed', e);
   }
+});
+
+// Final fallback: ensure session parsed summary is posted in session-claiming channels
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message || !message.channel || !message.author) return;
+    const channelId = String(message.channel.id || '');
+    if (channelId !== '1461370702895779945' && channelId !== '1461370812639481888') return;
+    const isSelf = Boolean(client.user && message.author.id === client.user.id);
+    if (isSelf) return;
+    let content = String(message.content || '').trim();
+    if (!content && Array.isArray(message.embeds) && message.embeds.length) {
+      const parts = [];
+      for (const e of message.embeds) {
+        try {
+          if (e.title) parts.push(String(e.title));
+          if (e.description) parts.push(String(e.description));
+          if (Array.isArray(e.fields)) for (const f of e.fields) parts.push(String(f.name || '') + ' ' + String(f.value || ''));
+        } catch (ee) {}
+      }
+      content = parts.join('\n').trim();
+    }
+    if (!content) return;
+    if (!(/<t:\d+:t>/.test(content) || /\b\d+\s*[\.)-]\s*[0-2]?\d[:.][0-5]\d\s*(?:-|–|—|to)\s*[0-2]?\d[:.][0-5]\d\b/i.test(content))) return;
+
+    const key = `force_summary:${message.id}`;
+    const now = Date.now();
+    const last = recentSendCache.get(key);
+    if (last && (now - last) < RECENT_SEND_WINDOW_MS) return;
+    recentSendCache.set(key, now);
+
+    const sessions = parseSessionMessage(content, message.createdAt);
+    if (!sessions || !sessions.length) return;
+
+    const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
+    const sumEmbed = new EmbedBuilder()
+      .setTitle('Session parsed')
+      .setColor(0x87CEFA)
+      .setDescription(lines.join('\n'))
+      .setTimestamp();
+
+    // remove previous parsed summaries in this channel
+    try {
+      const recent = await message.channel.messages.fetch({ limit: 10 }).catch(()=>null);
+      if (recent && typeof recent.filter === 'function') {
+        const parsedMsgs = recent.filter(m =>
+          m && m.author && client.user && m.author.id === client.user.id &&
+          Array.isArray(m.embeds) && m.embeds[0] && String(m.embeds[0].title || '').toLowerCase() === 'session parsed'
+        );
+        for (const m of parsedMsgs.values()) await m.delete().catch(()=>{});
+      }
+    } catch (e) {}
+
+    const rowsPending = buildSessionButtonRows('pending', sessions);
+
+    const posted = await (typeof message.reply === 'function'
+      ? message.reply({ embeds: [sumEmbed], components: rowsPending, allowedMentions: { parse: [] } })
+      : message.channel.send({ embeds: [sumEmbed], components: rowsPending, allowedMentions: { parse: [] } })
+    ).catch(()=>null);
+    if (posted) {
+      try {
+        const rows2 = buildSessionButtonRows(posted.id, sessions);
+        await posted.edit({ embeds: [sumEmbed], components: rows2 }).catch(()=>{});
+      } catch (e) {}
+      try {
+        const rawVal = content.substring(0, 4000);
+        sessionPostData.set(String(posted.id), { authorId: String(message.author.id), raw: rawVal, originChannelId: String(message.channel.id), originMessageId: String(message.id), guildId: message.guildId || (message.guild && message.guild.id) || null, parsed: sessions, postedAt: Date.now() });
+        sessionOriginToPosted.set(String(message.id), String(posted.id));
+        try { saveSessionPosts(); } catch (e) {}
+      } catch (e) {}
+    }
+  } catch (e) { console.error('final session parsed fallback failed', e); }
 });
 
 // Streamer watch commands (add/remove/list)
@@ -5690,9 +7702,29 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
 });
 
 // Resolve and validate token before login
-console.log('== DEBUG: reaching token resolution');
 const { token: resolvedToken, source } = resolveToken();
-console.log('== DEBUG: resolved token info ->', { hasToken: !!resolvedToken, source: source || null });
+
+// Optional: auto git-pull on startup (set GIT_AUTO_PULL=true)
+function maybeAutoGitPull() {
+  try {
+    if (!process.env.GIT_AUTO_PULL || String(process.env.GIT_AUTO_PULL).toLowerCase() !== 'true') return Promise.resolve(false);
+    const remote = process.env.GIT_PULL_REMOTE || 'origin';
+    const branch = process.env.GIT_PULL_BRANCH || 'main';
+    return new Promise((resolve) => {
+      exec(`git pull ${remote} ${branch}`, { cwd: __dirname, windowsHide: true }, (err, stdout, stderr) => {
+        if (err) console.warn('git pull failed:', err.message || err);
+        if (stdout) console.log(stdout.trim());
+        if (stderr) console.warn(stderr.trim());
+        resolve(true);
+      });
+    });
+  } catch (e) {
+    console.warn('git pull skipped:', e);
+    return Promise.resolve(false);
+  }
+}
+
+const startupPull = maybeAutoGitPull();
 
 // Use a normal variable for login (instead of process.env.*)
 const token = resolvedToken;
@@ -5719,11 +7751,13 @@ if (!validateTokenFormat(token)) {
   process.exit(1);
 }
 
-client.login(token).catch((e) => {
-  console.error('❌ Failed to login — token invalid.');
-  console.error('Tip: Regenerate the bot token in Discord Developer Portal and update your Startup variable or token.txt.');
-  console.error('Error:', e.message);
-  process.exit(1);
+Promise.resolve(startupPull).finally(() => {
+  client.login(token).catch((e) => {
+    console.error('❌ Failed to login — token invalid.');
+    console.error('Tip: Regenerate the bot token in Discord Developer Portal and update your Startup variable or token.txt.');
+    console.error('Error:', e.message);
+    process.exit(1);
+  });
 });
 
 // One-time startup simulation: if a file `simulate_session.json` exists in the data dir,
@@ -5746,7 +7780,7 @@ try {
         } catch (e) { console.error('Startup simulation failed', e); }
       } catch (e) { console.error('Failed to read simulate_session.json', e); }
       try { fs.unlinkSync(simPath); } catch (e) {}
-    }, 2000);
+    }, 2000); 
     }
   } catch (e) { console.error('startup simulation check failed', e); }
 
