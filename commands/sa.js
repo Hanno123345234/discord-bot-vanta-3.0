@@ -28,33 +28,44 @@ function resolveNextTimestampSeconds(hh, mm, now = new Date()) {
 function buildAnnouncement({ mode, regTs, gameTs, staffMentions, includeEveryone }) {
   const lines = [];
 
+  // Normalize timestamps: ensure registration opens is before game time
+  const game = Number(gameTs);
+  let reg = Number(regTs);
+  if (!Number.isFinite(reg) || reg <= 0 || (Number.isFinite(game) && reg >= game)) {
+    if (Number.isFinite(game) && game > 0) reg = game - (15 * 60);
+  }
+  const safeRegTs = Number.isFinite(reg) ? reg : game;
+  const safeGameTs = Number.isFinite(game) ? game : reg;
+  const displayRegTs = safeRegTs;
+  const displayGameTs = safeGameTs;
+
   if (mode === 'alpha') {
     lines.push('### Duo Practice Session <:alpha:1433978499601006725>');
     lines.push('');
-    lines.push(`> * **Registration Opens:** <t:${regTs}:t>`);
-    lines.push(`> * **Game 1/3:** <t:${gameTs}:t>`);
+    lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
+    lines.push(`> * **Game 1/3:** <t:${displayGameTs}:t>`);
     lines.push('');
-    lines.push(`Staff in charge: ${staffMentions || '<@1191442500976640172>'} `);
+    lines.push(`Staff in charge: ${staffMentions || '@staff'}`);
     lines.push('');
-    lines.push('**-** Session lasts **3 games**, **Missing a single game will get you banned.**');
-    lines.push('**-** Make sure to read https://discord.com/channels/1345822793631268971/1345822794771857492, https://discord.com/channels/1345822793631268971/1345822794771857493 & https://discord.com/channels/1345822793631268971/1382471501994787010 **before** playing.');
+    lines.push('**-** Session lasts **3 games**, **Miss a single game and you will be banned.**');
+    lines.push('**-** Make sure to read <#1345822794771857493> , <#1382471501994787010> & <#1345822794771857492> **before** playing.');
     lines.push('');
-    lines.push('**55+ reacts** | **110+ for second** (1 per duo)');
+    lines.push('**55+ reacts | 110+ for second** (1 per duo)');
     lines.push('');
     if (includeEveryone) lines.push('@everyone');
   } else {
-    lines.push('### Duo Practice Session <:beta:1433978497633615872>');
+    lines.push('### Duo Practice Session :beta~1:');
     lines.push('');
-    lines.push(`> * **Registration Opens:** <t:${regTs}:t>`);
-    lines.push(`> * **Game 1/3:** <t:${gameTs}:t>`);
+    lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
+    lines.push(`> * **Game 1/3:** <t:${displayGameTs}:t>`);
     lines.push('');
-    lines.push(`Staff in charge: ${staffMentions || '<@&1348295963579519139>'} `);
+    lines.push(`Staff in charge: ${staffMentions || '@Staff'}`);
     lines.push('');
-    lines.push('**-** Session lasts **3 games**, **Missing a single game will get you banned.**');
-    lines.push('**-** Make sure to read https://discord.com/channels/1348295963571126282/1407505477566468137, https://discord.com/channels/1348295963571126282/1348295963793424454 & https://discord.com/channels/1348295963571126282/1407503876067954791 **before** playing.');
+    lines.push('**-** Session lasts **3 games**, **Miss a single game and you will be banned.**');
+    lines.push('**-** Make sure to read #session-rules , #ban-offences & #session-information **before** playing.');
     lines.push('**-** **Bottom 5** will be kicked from the server');
     lines.push('');
-    lines.push('**55+ reacts** | **110+ for second** (1 per duo)');
+    lines.push('**55+ reacts | 110+ for second** (1 per duo)');
     lines.push('');
     if (includeEveryone) lines.push('@everyone');
   }

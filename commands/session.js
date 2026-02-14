@@ -1,6 +1,7 @@
 const { EmbedBuilder, ApplicationCommandOptionType } = require('discord.js');
 const path = require('path');
 const fs = require('fs');
+const CLAIMING_CONFIG = require('../claiming.config');
 
 const DATA_DIR = path.join(__dirname, '..');
 const SESSIONS_REMINDERS_PATH = path.join(DATA_DIR, 'sessions_reminders.json');
@@ -102,11 +103,11 @@ module.exports = {
         const regTs = parseInt(regTime, 10);
         const gameTs = parseInt(gameTime, 10);
         if (isNaN(regTs) || isNaN(gameTs)) return interaction.reply({ content: 'Invalid timestamps.', ephemeral: true });
-        const sessionLabel = type === 'alpha' ? ':alpha:' : ':beta:';
+        const sessionLabel = type === 'alpha' ? '<:alpha:1433978499601006725>' : ':beta~1:';
         // prefer the shared announcement builder to keep formatting consistent
         let saBuilder = null;
         try { saBuilder = require(path.join(DATA_DIR, 'commands', 'sa.js')); } catch (e) { saBuilder = null; }
-        let content = `Duo Practice Session ${sessionLabel}\n> * **Registration Opens:** <t:${regTs}:t>\n> * **Game 1/3:** <t:${gameTs}:t>\n\nStaff in charge: <@${staff.id}>\n\nRead ${links}`;
+        let content = `### Duo Practice Session ${sessionLabel}\n\n> * **Registration Opens:** <t:${regTs}:t>\n> * **Game 1/3:** <t:${gameTs}:t>\n\nStaff in charge: <@${staff.id}>\n\n${links}`;
         if (saBuilder && typeof saBuilder.buildAnnouncement === 'function') {
           try {
             content = saBuilder.buildAnnouncement({ mode: type, regTs, gameTs, staffMentions: `<@${staff.id}>`, includeEveryone: true });
@@ -119,7 +120,7 @@ module.exports = {
         // Also emit a fake message into the default alpha/beta channel so the messageCreate handler
         // will parse it and post the claim/announce embed there.
         try {
-          const targetId = (type === 'alpha') ? '1461370812639481888' : '1461370702895779945';
+          const targetId = String(CLAIMING_CONFIG.channels.announceNormal);
           const targetCh = await interaction.client.channels.fetch(targetId).catch(()=>null);
           const fakeChannel = targetCh || interaction.channel;
           const fakeMsg = {

@@ -2,5 +2,22 @@
   "blockedRoles": ["Member"],
   "allowedRoles": [],
   "muteMinutes": 2,
-  "logChannelNames": ["discord-logs", "mod-logs", "logs"]
+  "logChannelNames": ["discord-logs", "mod-logs", "logs"],
+  "blockInviteLinks": false,
+  "blockedWords": [
+    "nigger",
+    "nigga",
+    "kike",
+    "chink",
+    "spic",
+    "coon",
+    "raghead",
+    "wetback",
+    "zipperhead",
+    "gook",
+    "wog",
+    "sandnigger",
+    "kaffir",
+    "porch monkey"
+  ]
 }

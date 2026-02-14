@@ -24,12 +24,26 @@ module.exports = {
       const ticketCmd = require(path.join(DATA_DIR, 'commands', 'ticket.js'));
       const adminCmd = require(path.join(DATA_DIR, 'commands', 'admin.js'));
       const saCmd = require(path.join(DATA_DIR, 'commands', 'sa.js'));
+      let voiceActivityCmd = null;
+      try { voiceActivityCmd = require(path.join(DATA_DIR, 'commands', 'voiceactivity.js')); } catch (e) { /* ignore */ }
       // session command (creates Duo Practice Session announcements)
       let sessionCmd = null;
       try { sessionCmd = require(path.join(DATA_DIR, 'commands', 'session.js')); } catch (e) { /* ignore if missing */ }
       let createCmd = null;
       try { createCmd = require(path.join(DATA_DIR, 'commands', 'create.js')); } catch (e) { /* ignore */ }
-      const slashCommands = [ticketCmd.data, adminCmd.data, saCmd.data].concat(sessionCmd && sessionCmd.data ? [sessionCmd.data] : []).concat(createCmd && createCmd.data ? [createCmd.data] : []);
+      let pollCmd = null;
+      try { pollCmd = require(path.join(DATA_DIR, 'commands', 'poll.js')); } catch (e) { /* ignore */ }
+      let claimCmd = null;
+      try { claimCmd = require(path.join(DATA_DIR, 'commands', 'claim.js')); } catch (e) { /* ignore */ }
+      let whoisCmd = null;
+      try { whoisCmd = require(path.join(DATA_DIR, 'commands', 'whois.js')); } catch (e) { /* ignore */ }
+      const slashCommands = [ticketCmd.data, adminCmd.data, saCmd.data]
+        .concat(voiceActivityCmd && voiceActivityCmd.data ? [voiceActivityCmd.data] : [])
+        .concat(sessionCmd && sessionCmd.data ? [sessionCmd.data] : [])
+        .concat(createCmd && createCmd.data ? [createCmd.data] : [])
+        .concat(pollCmd && pollCmd.data ? [pollCmd.data] : [])
+        .concat(claimCmd && claimCmd.data ? [claimCmd.data] : [])
+        .concat(whoisCmd && whoisCmd.data ? [whoisCmd.data] : []);
       const testGuildId = process.env.TEST_GUILD_ID || config.testGuildId || null;
 
       async function upsertGuildSlashCommands(guild) {
@@ -86,6 +100,16 @@ module.exports = {
         } catch (e) {
           console.warn('Failed to register slash commands via application.commands.set()', e);
         }
+      }
+
+      // Restore persisted /claim schedules after restart/crash
+      try {
+        const claimInteraction = require(path.join(DATA_DIR, 'events', 'interactionCreate.ticket.js'));
+        if (claimInteraction && typeof claimInteraction.initClaimScheduler === 'function') {
+          await claimInteraction.initClaimScheduler(client);
+        }
+      } catch (e) {
+        console.warn('Failed to restore /claim schedules on ready', e);
       }
 
       // Optional: send ticket announcement to a configured channel ID

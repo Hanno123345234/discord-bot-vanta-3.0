@@ -19,7 +19,14 @@
       "leaveLogChannelId": "REPLACE_WITH_LEAVE_LOG_CHANNEL_ID",
       "moderationLogChannelId": "REPLACE_WITH_MODERATION_LOG_CHANNEL_ID",
       "memberRoleId": "REPLACE_WITH_MEMBER_ROLE_ID",
-      "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID"
+      "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID",
+
+      "voiceCreateEnabled": true,
+      "voiceCreateTriggerChannelId": "REPLACE_WITH_TRIGGER_VOICE_CHANNEL_ID",
+      "voiceCreateCategoryId": "REPLACE_WITH_CATEGORY_ID_OPTIONAL",
+      "voiceCreateDeleteWhenEmpty": true,
+      "voiceCreateNameMode": "displayName",
+      "voiceCreateNamePrefix": ""
     }
   },
   "transcriptFolder": "transcripts",

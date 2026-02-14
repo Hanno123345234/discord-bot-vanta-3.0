@@ -27,6 +27,17 @@ modlogs.json
 destaffs.json
 blacklist.json
 staff_role_history.json
+sessions_claims.json
+sessions_posts.json
+sessions_reminders.json
+sessions_watch.json
+polls.json
+voice_activity.json
+pre_reg_staff_jobs.json
+duo_claim_schedules.json
+claim_panel_states.json
+out.txt
+vanta_bot.sqlite
 
 # Ticket transcripts
 transcripts/

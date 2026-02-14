@@ -1,0 +1,24 @@
+Discord Bot Token Setup (for this project)
+
+1) Put token into .env (recommended)
+Create/Edit file: .env
+Add this line:
+DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN
+
+2) Alternative: token.txt
+Create file: token.txt
+Put ONLY the token in this file (one line, no extra text)
+
+3) Start bot
+npm start
+
+4) If you get "invalid token"
+- Go to Discord Developer Portal
+- Open your bot application
+- Regenerate token
+- Replace old token in .env or token.txt
+- Start again
+
+5) Security
+Never send your real token in Discord chat.
+If leaked, regenerate immediately.

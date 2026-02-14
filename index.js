@@ -1,5 +1,6 @@
 ﻿const fs = require('fs');
 const path = require('path');
+const CLAIMING_CONFIG = require('./claiming.config');
 let voiceActivity = null;
 try {
   voiceActivity = require('./utils/voice_activity');
@@ -238,7 +239,7 @@ function removeStreamerForGuild(guildId, streamerName) {
 
 // Guild IDs to exclude from cross-server blacklist/unblacklist actions
 const BLACKLIST_EXCLUDE_GUILD_IDS = new Set([
-  '1323668832862343219'
+  
 ]);
 
 function loadJson(p, fallback) {
@@ -404,7 +405,8 @@ async function handleJoinToCreateVoice(oldState, newState) {
 function loadWatchChannels(guildId) {
   try {
     const all = loadJson(SESSIONS_WATCH_PATH, {});
-    const defaults = ['1461370812639481888', '1461370702895779945'];
+    // Defaults (fallback) for session-claiming channels
+    const defaults = ['1469754683760316614', '1469754640777347176'];
     const set = new Set(defaults.map(String));
     if (all && typeof all === 'object') {
       if (all.global && Array.isArray(all.global)) for (const c of all.global) set.add(String(c));
@@ -423,7 +425,7 @@ function loadWatchChannels(guildId) {
       }
     } catch (e) {}
     return set;
-  } catch (e) { return new Set(['1461370812639481888', '1461370702895779945']); }
+  } catch (e) { return new Set(['1469754683760316614', '1469754640777347176']); }
 }
 
 function addWatchChannel(guildId, channelId) {
@@ -565,13 +567,101 @@ function isUserBlacklisted(userId) {
   } catch (e) { return false; }
 }
 
+function isUserDiceBlacklisted(userId) {
+  try {
+    if (!blacklist || !Array.isArray(blacklist.diceBlacklisted)) return false;
+    return blacklist.diceBlacklisted.some(b => b && String(b.id) === String(userId));
+  } catch (e) { return false; }
+}
+
 // Automod configuration (env vars override file)
+// NOTE: Keep this list reasonably sized and maintain it in automod.json when possible.
+// We intentionally avoid printing the raw matched words in logs; they get masked.
+const DEFAULT_AUTOMOD_BLOCKED_WORDS = [
+  'nigger',
+  'nigga',
+  'kike',
+  'chink',
+  'spic',
+  'coon',
+  'raghead',
+  'wetback',
+  'zipperhead',
+  'gook',
+  'wog',
+  'sandnigger',
+  'kaffir',
+  'porch monkey'
+];
+
 const DEFAULT_AUTOMOD = {
   blockedRoles: ['Member'],
   allowedRoles: [],
   muteMinutes: 2,
-  logChannelNames: ['discord-logs', 'mod-logs', 'logs']
+  logChannelNames: ['discord-logs', 'mod-logs', 'logs'],
+  // Link automod toggle: set true to delete/timeout Discord invite links.
+  // User request (2026-02-07): disable link automod.
+  blockInviteLinks: false
 };
+
+function automodStripDiacritics(s) {
+  try {
+    return String(s || '').normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+  } catch (e) {
+    return String(s || '');
+  }
+}
+
+function automodNormalizeText(s) {
+  let t = automodStripDiacritics(String(s || '').toLowerCase());
+  // common leetspeak / symbol substitutions
+  t = t
+    .replace(/[@]/g, 'a')
+    .replace(/[\$]/g, 's')
+    .replace(/[0]/g, 'o')
+    .replace(/[1!|]/g, 'i')
+    .replace(/[3]/g, 'e')
+    .replace(/[4]/g, 'a')
+    .replace(/[5]/g, 's')
+    .replace(/[7]/g, 't');
+
+  // turn punctuation into spaces, keep letters and spaces
+  t = t.replace(/[^a-z\s]/g, ' ');
+  // collapse long repeats (e.g. "niiiigga" -> "niigga")
+  t = t.replace(/([a-z])\1{2,}/g, '$1$1');
+  // normalize whitespace
+  t = t.replace(/\s+/g, ' ').trim();
+  return t;
+}
+
+function automodMaskWord(w) {
+  const s = String(w || '').trim();
+  if (!s) return '';
+  if (s.length <= 2) return '*'.repeat(s.length);
+  return `${s[0]}${'*'.repeat(Math.min(8, s.length - 2))}${s[s.length - 1]}`;
+}
+
+function automodFindBlockedMatches(text, blockedWords) {
+  const list = Array.isArray(blockedWords) ? blockedWords : [];
+  const normText = ` ${automodNormalizeText(text)} `;
+  const matches = [];
+  for (const raw of list) {
+    if (raw == null) continue;
+    const w = automodNormalizeText(raw);
+    if (!w) continue;
+    if (normText.includes(` ${w} `)) matches.push(String(raw));
+  }
+  return matches;
+}
+
+function parseEnvBool(v) {
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+  if (['1', 'true', 'yes', 'y', 'on'].includes(s)) return true;
+  if (['0', 'false', 'no', 'n', 'off'].includes(s)) return false;
+  return null;
+}
 
 function loadAutomodConfig() {
   const cfg = Object.assign({}, DEFAULT_AUTOMOD);
@@ -579,6 +669,10 @@ function loadAutomodConfig() {
   if (process.env.AUTOMOD_ALLOWED_ROLES) cfg.allowedRoles = process.env.AUTOMOD_ALLOWED_ROLES.split(',').map(s => s.trim()).filter(Boolean);
   if (process.env.AUTOMOD_MUTE_MINUTES) { const n = parseInt(process.env.AUTOMOD_MUTE_MINUTES, 10); if (!isNaN(n)) cfg.muteMinutes = n; }
   if (process.env.AUTOMOD_LOG_CHANNELS) cfg.logChannelNames = process.env.AUTOMOD_LOG_CHANNELS.split(',').map(s => s.trim()).filter(Boolean);
+  {
+    const b = parseEnvBool(process.env.AUTOMOD_BLOCK_INVITE_LINKS);
+    if (typeof b === 'boolean') cfg.blockInviteLinks = b;
+  }
   try {
     const p = path.join(DATA_DIR, 'automod.json'); 
     console.log('Loading automod configuration from', p);
@@ -588,8 +682,12 @@ function loadAutomodConfig() {
       if (Array.isArray(fileCfg.allowedRoles)) cfg.allowedRoles = fileCfg.allowedRoles;
       if (typeof fileCfg.muteMinutes === 'number') cfg.muteMinutes = fileCfg.muteMinutes;
       if (Array.isArray(fileCfg.logChannelNames)) cfg.logChannelNames = fileCfg.logChannelNames;
+      if (typeof fileCfg.blockInviteLinks === 'boolean') cfg.blockInviteLinks = fileCfg.blockInviteLinks;
+      if (Array.isArray(fileCfg.blockedWords)) cfg.blockedWords = fileCfg.blockedWords;
     }
   } catch (e) { console.error('Failed to load automod.json', e); }
+  // Always allow links; invite-link automod is disabled.
+  cfg.blockInviteLinks = false;
   return cfg;
 }
 
@@ -610,8 +708,13 @@ const recentModActionKeys = new Map(); // key -> timestamp
 function markRecentModAction(guildId, type, subjectId, moderatorId = '*') {
   try {
     const now = Date.now();
-    const key = `${String(guildId || 'dm')}:${String(type || 'Unknown')}:${String(subjectId || 'unknown')}:${String(moderatorId || '*')}`;
-    recentModActionKeys.set(key, now);
+    const base = `${String(guildId || 'dm')}:${String(type || 'Unknown')}:${String(subjectId || 'unknown')}`;
+    const modKey = `${base}:${String(moderatorId || '*')}`;
+    recentModActionKeys.set(modKey, now);
+    // Always also store a wildcard moderator key so audit-log based dedupe works even when
+    // executor IDs differ (bot vs label) or are missing.
+    const wildcardKey = `${base}:*`;
+    recentModActionKeys.set(wildcardKey, now);
     // cheap cleanup
     for (const [k, ts] of recentModActionKeys) {
       if ((now - ts) > RECENT_MOD_ACTION_TTL_MS) recentModActionKeys.delete(k);
@@ -645,9 +748,21 @@ function normalizeReason(reason) {
 }
 
 function ensurePermBanReason(reason) {
-  const r = normalizeReason(reason);
+  const raw = String(reason || '').trim();
+  if (!raw || raw.toLowerCase() === 'no reason provided') return 'Perm';
+  const r = normalizeReason(raw);
   if (/^perm\b/i.test(r)) return r;
-  return `Perm ${r}`;
+  return r;
+}
+
+function displayCaseType(type) {
+  const t = String(type || '').trim();
+  const lt = t.toLowerCase();
+  if (lt === 'blacklist') return 'Blacklisted';
+  if (lt === 'unblacklist') return 'Unblacklisted';
+  if (lt === 'guildblacklist') return 'Server Blacklisted';
+  if (lt === 'guildunblacklist') return 'Server Unblacklisted';
+  return t || 'Unknown';
 }
 
 function writeModlogCaseToMd({ guild, caseId, type, userId, moderatorId, reason, whenTs }) {
@@ -709,12 +824,12 @@ function getSessionsCfgByMode(mode, guildId) {
     const m = mode ? String(mode) : 'default';
     const guildOverrides = guildId && cfg.guilds && cfg.guilds[String(guildId)] ? cfg.guilds[String(guildId)].sessions : null;
     if (guildOverrides && guildOverrides[m]) return guildOverrides[m];
-    return cfg.sessions[m] || cfg.sessions['default'] || {};
+    return cfg.sessions[m] || cfg.sessions['default'] || {};d
   } catch (e) { return {}; }
 }
 
 // sessions log channel id (default fallback)
-const SESSIONS_LOG_CHANNEL_ID = '1461475110761533451';
+const SESSIONS_LOG_CHANNEL_ID = '1469760090151063754';
 
 function resolveSessionsLogChannelId(guildId) {
   try {
@@ -879,6 +994,547 @@ const scheduledReminderTimeouts = new Map();
 const sessionPostData = new Map();
 // Map origin message id -> posted summary message id
 const sessionOriginToPosted = new Map();
+// Auto-post one hour before registration in a specific channel
+const PRE_REG_ANNOUNCE_CHANNEL_ID = String(CLAIMING_CONFIG.channels.announceNormal);
+const PRE_REG_RELOAD_ANNOUNCE_CHANNEL_ID = String(CLAIMING_CONFIG.channels.announceReload);
+const PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS = new Set([
+  PRE_REG_ANNOUNCE_CHANNEL_ID,
+  PRE_REG_RELOAD_ANNOUNCE_CHANNEL_ID,
+]);
+const PRE_REG_STAFF_CLAIM_CHANNEL_ID = String(CLAIMING_CONFIG.channels.claimStaff);
+const PRE_REG_HEAD_STAFF_CLAIM_CHANNEL_ID = String(CLAIMING_CONFIG.channels.claimHead);
+const PRE_REG_CLAIM_CHANNEL_ID = PRE_REG_HEAD_STAFF_CLAIM_CHANNEL_ID;
+const PRE_REG_STAFF_ROLE_ID = String(CLAIMING_CONFIG.roles.staff);
+const PRE_REG_HEAD_STAFF_ROLE_ID = String(CLAIMING_CONFIG.roles.head);
+const PRE_REG_CLAIM_ROLE_ID = PRE_REG_HEAD_STAFF_ROLE_ID;
+const PRE_REG_CLAIM_TARGETS = [
+  { channelId: PRE_REG_STAFF_CLAIM_CHANNEL_ID, roleId: PRE_REG_STAFF_ROLE_ID, maxClaimsPerUser: Number(CLAIMING_CONFIG.limits.staffMaxClaims), key: 'staff' },
+  { channelId: PRE_REG_HEAD_STAFF_CLAIM_CHANNEL_ID, roleId: PRE_REG_HEAD_STAFF_ROLE_ID, maxClaimsPerUser: Number(CLAIMING_CONFIG.limits.headMaxClaims), key: 'head' },
+];
+const PRE_REG_HEAD_STAFF_IMMEDIATE = CLAIMING_CONFIG.behavior.headImmediate === true;
+const PRE_REG_ANNOUNCE_LEAD_MS = Number(CLAIMING_CONFIG.timing.preRegLeadMs);
+const PRE_REG_LATE_CATCHUP_MAX_MS = Number(CLAIMING_CONFIG.timing.catchupMs);
+const PRE_REG_JOBS_PATH = path.join(DATA_DIR, 'pre_reg_staff_jobs.json');
+const PRE_REG_PANEL_STATES_PATH = path.join(DATA_DIR, 'claim_panel_states.json');
+const preRegAnnouncementTimeouts = new Map();
+const preRegStaffPanels = new Map();
+let preRegJobsHydrated = false;
+
+function loadPreRegPanelStates() {
+  try {
+    const rows = loadJson(PRE_REG_PANEL_STATES_PATH, []);
+    return Array.isArray(rows) ? rows : [];
+  } catch (e) { return []; }
+}
+
+function savePreRegPanelStates(rows) {
+  try { saveJson(PRE_REG_PANEL_STATES_PATH, Array.isArray(rows) ? rows : []); } catch (e) {}
+}
+
+function sanitizePreRegPanelState(panelId, panelState) {
+  const state = panelState && typeof panelState === 'object' ? panelState : {};
+  const sessions = Array.isArray(state.sessions)
+    ? state.sessions.map(s => ({
+      sessionIndex: Number(s && s.sessionIndex ? s.sessionIndex : 1),
+      regTs: Number(s && s.regTs ? s.regTs : 0),
+      gameTs: Number(s && s.gameTs ? s.gameTs : 0),
+      supervisorId: String(s && s.supervisorId ? s.supervisorId : ''),
+    }))
+    : [];
+
+  return {
+    panelId: String(panelId || ''),
+    panelType: String(state.panelType || 'head-supervisor'),
+    sessionIndex: Number(state.sessionIndex || 1),
+    regTs: Number(state.regTs || 0),
+    gameTs: Number(state.gameTs || 0),
+    isReload: !!state.isReload,
+    claimRoleId: String(state.claimRoleId || ''),
+    maxClaimsPerUser: Math.max(1, Number(state.maxClaimsPerUser || 1)),
+    supervisorId: String(state.supervisorId || ''),
+    claims: Array.isArray(state.claims) ? state.claims.map(x => String(x)) : [],
+    sessions,
+    updatedAt: Date.now(),
+  };
+}
+
+function upsertPreRegPanelState(panelId, panelState) {
+  try {
+    const id = String(panelId || '');
+    if (!id || id.startsWith('pending:')) return;
+    const clean = sanitizePreRegPanelState(id, panelState);
+    const all = loadPreRegPanelStates();
+    const idx = all.findIndex(x => String(x && x.panelId ? x.panelId : '') === id);
+    if (idx >= 0) all[idx] = clean;
+    else all.push(clean);
+    savePreRegPanelStates(all);
+  } catch (e) {}
+}
+
+function initPreRegPanelStates() {
+  try {
+    const rows = loadPreRegPanelStates();
+    const keep = [];
+    for (const row of rows) {
+      const panelId = String(row && row.panelId ? row.panelId : '');
+      if (!panelId) continue;
+      const clean = sanitizePreRegPanelState(panelId, row);
+      preRegStaffPanels.set(panelId, clean);
+      keep.push(clean);
+    }
+    savePreRegPanelStates(keep);
+  } catch (e) {
+    console.error('initPreRegPanelStates failed', e);
+  }
+}
+
+function buildPreRegPanelEmbed(panelState) {
+  const panelType = String(panelState.panelType || 'head-supervisor');
+  if (panelType === 'staff-lobby') {
+    const claims = Array.isArray(panelState.claims) ? panelState.claims : [];
+    const sessionNo = Number(panelState.sessionIndex || 1);
+    const regTs = Number(panelState.regTs || 0);
+    const gameTs = Number(panelState.gameTs || 0);
+    const isReload = !!panelState.isReload;
+    const embed = new EmbedBuilder()
+      .setColor(0x87CEFA)
+      .setTitle(isReload ? `Reload Session ${sessionNo} Staff Panel` : `Duos Session ${sessionNo} Staff Panel`)
+      .setDescription(`**Registration:** <t:${regTs}:t>\n**First Game:** <t:${gameTs}:t>`)
+      .setFooter({ text: `Session ID: auto_${sessionNo}_${regTs}` });
+
+    const fields = [];
+    if (!claims.length) {
+      fields.push({ name: 'Lobby 1', value: '—', inline: true });
+      fields.push({ name: '\u200B', value: '\u200B', inline: true });
+      fields.push({ name: '\u200B', value: '\u200B', inline: true });
+    } else {
+      const shown = claims.slice(0, 24);
+      for (let i = 0; i < shown.length; i += 2) {
+        fields.push({ name: `Lobby ${i + 1}`, value: `<@${shown[i]}>`, inline: true });
+        if (shown[i + 1]) fields.push({ name: `Lobby ${i + 2}`, value: `<@${shown[i + 1]}>`, inline: true });
+        else fields.push({ name: '\u200B', value: '\u200B', inline: true });
+        fields.push({ name: '\u200B', value: '\u200B', inline: true });
+      }
+    }
+    embed.addFields(fields);
+    return embed;
+  }
+
+  const isReload = !!panelState.isReload;
+  const sessions = Array.isArray(panelState.sessions) && panelState.sessions.length
+    ? panelState.sessions.slice().sort((a, b) => Number(a.sessionIndex || 0) - Number(b.sessionIndex || 0))
+    : [{
+      sessionIndex: Number(panelState.sessionIndex || 1),
+      regTs: Number(panelState.regTs || 0),
+      gameTs: Number(panelState.gameTs || 0),
+      supervisorId: String(panelState.supervisorId || ((Array.isArray(panelState.claims) && panelState.claims[0]) ? panelState.claims[0] : '') || ''),
+    }];
+
+  const lines = [];
+  for (const s of sessions) {
+    const sup = String(s.supervisorId || '');
+    lines.push(`**${isReload ? 'Reload Session' : 'Session'} ${s.sessionIndex}**`);
+    lines.push(`> Time: <t:${Number(s.regTs || 0)}:t>`);
+    lines.push(`> Supervisor: ${sup ? `<@${sup}>` : '—'}`);
+    lines.push('');
+  }
+
+  const embed = new EmbedBuilder()
+    .setColor(0x8A2BE2)
+    .setTitle(isReload ? 'Supervisor Panel - Reload Duos' : 'Supervisor Panel - Duos')
+    .setDescription(lines.join('\n').trim())
+    .setFooter({ text: `Session ID: auto_${sessions.map(s => `${s.sessionIndex}_${s.regTs}`).join('__')}` });
+  return embed;
+}
+
+function buildPreRegPanelRow(messageId) {
+  const state = preRegStaffPanels.get(String(messageId));
+  if (state && String(state.panelType || '') === 'staff-lobby') {
+    return [new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(`staffpanel_lobby_claim:${messageId}`).setLabel('🖐 Claim Lobby').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(`staffpanel_lobby_unclaim:${messageId}`).setLabel('Unclaim').setStyle(ButtonStyle.Danger)
+    )];
+  }
+
+  const sessions = state && Array.isArray(state.sessions) && state.sessions.length
+    ? state.sessions.slice().sort((a, b) => Number(a.sessionIndex || 0) - Number(b.sessionIndex || 0))
+    : [{
+      sessionIndex: Number(state && state.sessionIndex ? state.sessionIndex : 1),
+      supervisorId: String((state && (state.supervisorId || (Array.isArray(state.claims) ? state.claims[0] : null))) || ''),
+    }];
+
+  const rows = [];
+  const buttons = sessions.slice(0, 10).map((s) => {
+    const sessionNo = Number(s && s.sessionIndex ? s.sessionIndex : 1);
+    const hasSupervisor = !!String(s && s.supervisorId ? s.supervisorId : '');
+    return new ButtonBuilder()
+      .setCustomId(`staffpanel_toggle:${messageId}:${sessionNo}`)
+      .setLabel(`S${sessionNo} ${hasSupervisor ? 'Unclaim' : 'Claim'}`)
+      .setStyle(ButtonStyle.Success);
+  });
+
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+  }
+  return rows;
+}
+
+function loadPreRegJobs() {
+  try {
+    const rows = loadJson(PRE_REG_JOBS_PATH, []);
+    return Array.isArray(rows) ? rows : [];
+  } catch (e) { return []; }
+}
+
+function savePreRegJobs(rows) {
+  try { saveJson(PRE_REG_JOBS_PATH, Array.isArray(rows) ? rows : []); } catch (e) {}
+}
+
+function upsertPreRegJob(job) {
+  try {
+    const key = String(job && job.timerKey ? job.timerKey : '');
+    if (!key) return;
+    const all = loadPreRegJobs();
+    const idx = all.findIndex(x => String(x && x.timerKey ? x.timerKey : '') === key);
+    if (idx >= 0) all[idx] = job;
+    else all.push(job);
+    savePreRegJobs(all);
+  } catch (e) {}
+}
+
+function removePreRegJob(timerKey) {
+  try {
+    const key = String(timerKey || '');
+    if (!key) return;
+    const all = loadPreRegJobs();
+    savePreRegJobs(all.filter(x => String(x && x.timerKey ? x.timerKey : '') !== key));
+  } catch (e) {}
+}
+
+function removePreRegJobsByOrigin(originMessageId) {
+  try {
+    const prefix = `${String(originMessageId)}:`;
+    const all = loadPreRegJobs();
+    savePreRegJobs(all.filter(x => !String(x && x.timerKey ? x.timerKey : '').startsWith(prefix)));
+  } catch (e) {}
+}
+
+async function postPreRegStaffPanel(job) {
+  const sessionsFromJob = Array.isArray(job.sessions) ? job.sessions : null;
+  const jobTargetKey = String(job && job.targetKey ? job.targetKey : '');
+  const uniqueTargets = Array.from(new Map(PRE_REG_CLAIM_TARGETS.map(t => [String(t.channelId), t])).values())
+    .filter(t => !jobTargetKey || String(t.key || '') === jobTargetKey);
+  let postedCount = 0;
+
+  for (const target of uniqueTargets) {
+    const targetChannelId = String(target.channelId || '');
+    const ch = client.channels.cache.get(targetChannelId) || await client.channels.fetch(targetChannelId).catch((e) => {
+      console.warn('[pre-reg] failed to fetch target channel', { targetChannelId, error: String(e && (e.message || e)) });
+      return null;
+    });
+    if (!ch) {
+      console.warn('[pre-reg] target channel not found', { targetChannelId });
+      continue;
+    }
+    if (typeof ch.isTextBased === 'function' && !ch.isTextBased()) {
+      console.warn('[pre-reg] target channel is not text-based', { targetChannelId, type: String(ch.type) });
+      continue;
+    }
+    if (typeof ch.send !== 'function') {
+      console.warn('[pre-reg] target channel has no send()', { targetChannelId, type: String(ch.type) });
+      continue;
+    }
+
+    const sessionsList = sessionsFromJob && sessionsFromJob.length
+      ? sessionsFromJob.map(s => ({
+        sessionIndex: Number(s && s.sessionIndex ? s.sessionIndex : 1),
+        regTs: Number(s && s.regTs ? s.regTs : 0),
+        gameTs: Number(s && s.gameTs ? s.gameTs : 0),
+      }))
+      : [{
+        sessionIndex: Number(job.sessionIndex || 1),
+        regTs: Number(job.regTs || 0),
+        gameTs: Number(job.gameTs || 0),
+      }];
+
+    const panelStates = (String(target.key || '') === 'staff')
+      ? sessionsList.map(s => ({
+        panelType: 'staff-lobby',
+        sessionIndex: Number(s.sessionIndex || 1),
+        regTs: Number(s.regTs || 0),
+        gameTs: Number(s.gameTs || 0),
+        isReload: !!job.isReload,
+        claimRoleId: String(target.roleId || ''),
+        maxClaimsPerUser: Number(target.maxClaimsPerUser || 1),
+        claims: [],
+      }))
+      : [{
+        panelType: 'head-supervisor',
+        sessionIndex: Number(job.sessionIndex || 1),
+        regTs: Number(job.regTs || 0),
+        gameTs: Number(job.gameTs || 0),
+        isReload: !!job.isReload,
+        claimRoleId: String(target.roleId || ''),
+        maxClaimsPerUser: Number(target.maxClaimsPerUser || 1),
+        supervisorId: null,
+        claims: [],
+        sessions: sessionsList.map(s => ({
+          sessionIndex: Number(s.sessionIndex || 1),
+          regTs: Number(s.regTs || 0),
+          gameTs: Number(s.gameTs || 0),
+          supervisorId: null,
+        })),
+      }];
+
+    for (const panelState of panelStates) {
+      const pendingKey = `pending:${String(target.key || target.channelId)}:${String(panelState.sessionIndex || 'bundle')}`;
+      preRegStaffPanels.set(pendingKey, panelState);
+      const pendingRows = buildPreRegPanelRow(pendingKey);
+      const sent = await ch.send({ embeds: [buildPreRegPanelEmbed(panelState)], components: pendingRows, allowedMentions: { parse: ['users'] } }).catch((e) => {
+        console.warn('[pre-reg] failed to send panel message', { targetChannelId, error: String(e && (e.message || e)) });
+        return null;
+      });
+      preRegStaffPanels.delete(pendingKey);
+      if (!sent) continue;
+      postedCount += 1;
+
+      preRegStaffPanels.set(String(sent.id), panelState);
+      upsertPreRegPanelState(String(sent.id), panelState);
+      const rows = buildPreRegPanelRow(String(sent.id));
+      await sent.edit({ embeds: [buildPreRegPanelEmbed(panelState)], components: rows, allowedMentions: { parse: ['users'] } }).catch((e) => {
+        console.warn('[pre-reg] failed to finalize panel message', { targetChannelId, messageId: String(sent.id), error: String(e && (e.message || e)) });
+      });
+    }
+
+    const pingRoleId = String(target.roleId || '');
+    if (pingRoleId) {
+      const pingMsg = await ch.send({ content: `<@&${pingRoleId}>`, allowedMentions: { roles: [pingRoleId] } }).catch((e) => {
+        console.warn('[pre-reg] failed to ping role', { targetChannelId, roleId: pingRoleId, error: String(e && (e.message || e)) });
+        return null;
+      });
+      if (pingMsg) setTimeout(() => { try { pingMsg.delete().catch(() => {}); } catch (e) {} }, 1800);
+    }
+  }
+
+  if (postedCount === 0) {
+    console.error('[pre-reg] panel was not posted to any target channel', {
+      targets: uniqueTargets.map(t => String(t.channelId || '')),
+      originMessageId: String(job && job.originMessageId ? job.originMessageId : ''),
+      timerKey: String(job && job.timerKey ? job.timerKey : ''),
+    });
+  }
+}
+
+function schedulePreRegJob(job, { persist = true } = {}) {
+  const timerKey = String(job && job.timerKey ? job.timerKey : '');
+  if (!timerKey) return;
+
+  if (preRegAnnouncementTimeouts.has(timerKey)) {
+    try { clearTimeout(preRegAnnouncementTimeouts.get(timerKey)); } catch (e) {}
+    preRegAnnouncementTimeouts.delete(timerKey);
+  }
+
+  if (persist) upsertPreRegJob(job);
+
+  let delay = Math.max(0, Number(job.sendAtMs || Date.now()) - Date.now());
+  if (!Number.isFinite(delay)) delay = 0;
+
+  const t = setTimeout(async () => {
+    try {
+      await postPreRegStaffPanel(job);
+    } catch (e) {
+      console.error('pre-registration auto announcement failed', e);
+    } finally {
+      preRegAnnouncementTimeouts.delete(timerKey);
+      removePreRegJob(timerKey);
+    }
+  }, delay);
+  preRegAnnouncementTimeouts.set(timerKey, t);
+}
+
+function initPreRegScheduler() {
+  try {
+    if (preRegJobsHydrated) return;
+    preRegJobsHydrated = true;
+
+    const now = Date.now();
+    const all = loadPreRegJobs();
+    const keep = [];
+    for (const job of all) {
+      if (!job || !job.timerKey) continue;
+      let sendAtMs = Number(job.sendAtMs || 0);
+      let gameEndMs = 0;
+      if (Array.isArray(job.sessions) && job.sessions.length) {
+        const maxGameTs = Math.max(...job.sessions.map(s => Number(s && s.gameTs ? s.gameTs : 0)));
+        gameEndMs = (maxGameTs * 1000) + PRE_REG_LATE_CATCHUP_MAX_MS;
+      } else {
+        if (!job.regTs || !job.gameTs) continue;
+        gameEndMs = (Number(job.gameTs) * 1000) + PRE_REG_LATE_CATCHUP_MAX_MS;
+      }
+      if (!Number.isFinite(sendAtMs) || sendAtMs <= 0) continue;
+      if (now > gameEndMs) continue;
+      if (sendAtMs < now) sendAtMs = now + 1500;
+      const fixed = Object.assign({}, job, { sendAtMs });
+      keep.push(fixed);
+      schedulePreRegJob(fixed, { persist: false });
+    }
+    savePreRegJobs(keep);
+  } catch (e) {
+    console.error('initPreRegScheduler failed', e);
+  }
+}
+
+function clearPreRegAnnouncementsForOrigin(originMessageId) {
+  try {
+    const prefix = `${String(originMessageId)}:`;
+    for (const [k, t] of preRegAnnouncementTimeouts.entries()) {
+      if (!String(k).startsWith(prefix)) continue;
+      try { clearTimeout(t); } catch (e) {}
+      preRegAnnouncementTimeouts.delete(k);
+    }
+    removePreRegJobsByOrigin(originMessageId);
+  } catch (e) {}
+}
+
+function resolveAnnouncementModeFromRawAndChannel(raw, channelId) {
+  try {
+    const cfgAll = loadJson(path.join(DATA_DIR, 'config.json'), {});
+    const tracks = (cfgAll && cfgAll.sessionAnnouncements && Array.isArray(cfgAll.sessionAnnouncements.tracks))
+      ? cfgAll.sessionAnnouncements.tracks
+      : [];
+    const found = tracks.find(t => String(t.channelId) === String(channelId));
+    if (found && found.id) return String(found.id);
+  } catch (e) {}
+  const rawLower = String(raw || '').toLowerCase();
+  return /alpha/.test(rawLower) ? 'alpha' : 'beta';
+}
+
+function normalizeStaffMentions(staffRaw) {
+  try {
+    const txt = String(staffRaw || '');
+    const tokens = txt.match(/<@!?\d+>|<@&\d+>/g) || [];
+    if (tokens.length) return Array.from(new Set(tokens)).join(' ');
+    return '@Staff';
+  } catch (e) {
+    return '@Staff';
+  }
+}
+
+function schedulePreRegistrationAnnouncements({ originMessageId, originChannelId, guildId, raw, sessions }) {
+  try {
+    const sourceChannelId = String(originChannelId || '');
+    const isReload = sourceChannelId === PRE_REG_RELOAD_ANNOUNCE_CHANNEL_ID;
+    if (!PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS.has(sourceChannelId)) return;
+    if (!Array.isArray(sessions) || !sessions.length) return;
+    clearPreRegAnnouncementsForOrigin(originMessageId);
+
+    const normalized = [];
+    for (let idx = 0; idx < sessions.length; idx++) {
+      const sess = sessions[idx];
+      const regTs = Math.floor(Number(sess && sess.start ? sess.start : 0) / 1000);
+      if (!Number.isFinite(regTs) || regTs <= 0) continue;
+      const endTs = Math.floor(Number(sess && sess.end ? sess.end : 0) / 1000);
+      const gameTs = (Number.isFinite(endTs) && endTs > regTs) ? endTs : (regTs + 10 * 60);
+      normalized.push({ sessionIndex: Number(sess && sess.index ? sess.index : (idx + 1)), regTs, gameTs });
+    }
+    if (!normalized.length) return;
+
+    const nowMs = Date.now();
+    const relevant = normalized.filter(s => nowMs <= ((s.gameTs * 1000) + PRE_REG_LATE_CATCHUP_MAX_MS));
+    if (!relevant.length) return;
+
+    if (PRE_REG_HEAD_STAFF_IMMEDIATE) {
+      const timerKey = `${String(originMessageId)}:head:bundle`;
+      const job = {
+        timerKey,
+        targetKey: 'head',
+        originMessageId: String(originMessageId),
+        isReload,
+        sessions: relevant,
+        sendAtMs: Date.now() + 1200,
+        createdAt: Date.now(),
+      };
+      schedulePreRegJob(job, { persist: true });
+    }
+
+    // Staff panels: 1 hour before each session registration time
+    for (const s of relevant) {
+      const sendAt = (s.regTs * 1000) - PRE_REG_ANNOUNCE_LEAD_MS;
+      let delay = sendAt - nowMs;
+      if (delay <= 0) delay = 1200;
+
+      const timerKey = `${String(originMessageId)}:staff:${s.sessionIndex}`;
+      const job = {
+        timerKey,
+        targetKey: 'staff',
+        originMessageId: String(originMessageId),
+        isReload,
+        sessionIndex: Number(s.sessionIndex || 1),
+        regTs: Number(s.regTs || 0),
+        gameTs: Number(s.gameTs || 0),
+        sendAtMs: Date.now() + delay,
+        createdAt: Date.now(),
+      };
+      schedulePreRegJob(job, { persist: true });
+    }
+  } catch (e) {
+    console.error('schedulePreRegistrationAnnouncements failed', e);
+  }
+}
+
+function splitDiscordMessage(content, maxLen = 2000) {
+  const text = String(content ?? '');
+  if (!text) return [''];
+  if (text.length <= maxLen) return [text];
+  const chunks = [];
+  let remaining = text;
+  while (remaining.length > maxLen) {
+    let cut = remaining.lastIndexOf('\n', maxLen);
+    if (cut < Math.floor(maxLen * 0.5)) cut = remaining.lastIndexOf(' ', maxLen);
+    if (cut < Math.floor(maxLen * 0.5)) cut = maxLen;
+    chunks.push(remaining.slice(0, cut).trimEnd());
+    remaining = remaining.slice(cut).trimStart();
+  }
+  if (remaining.length) chunks.push(remaining);
+  return chunks.length ? chunks : [''];
+}
+
+function isClaimPanelLikeMessage(message, contentText) {
+  try {
+    const text = String(contentText || '').toLowerCase();
+    const titleText = String(message && message.embeds && message.embeds[0] && message.embeds[0].title ? message.embeds[0].title : '').toLowerCase();
+    const fromBot = !!(message && message.author && message.author.bot);
+
+    const hasClaimEmbedTitle = fromBot && /session\s*parsed|staff\s*panel|supervisor\s*panel/.test(titleText);
+    const hasClaimText = fromBot && /press\s+the\s+button\s+to\s+claim\/unclaim|claim\s+lobby/.test(text);
+
+    let hasClaimButtons = false;
+    const rows = Array.isArray(message && message.components) ? message.components : [];
+    for (const row of rows) {
+      const comps = Array.isArray(row && row.components) ? row.components : [];
+      for (const comp of comps) {
+        const customId = String(comp && comp.customId ? comp.customId : '').toLowerCase();
+        if (customId.startsWith('staffpanel_') || customId.startsWith('duo_claim_') || customId.startsWith('session_claim:')) {
+          hasClaimButtons = true;
+          break;
+        }
+      }
+      if (hasClaimButtons) break;
+    }
+
+    return hasClaimButtons || hasClaimEmbedTitle || hasClaimText;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function sendChunkedDM(user, content, maxLen = 2000) {
+  const parts = splitDiscordMessage(content, maxLen);
+  for (const part of parts) {
+    if (!part) continue;
+    await user.send({ content: part });
+  }
+}
 
 function parseSessionMessage(content, referenceDate) {
   // Parse simple session posts like in screenshots:
@@ -991,6 +1647,10 @@ function parseSessionMessage(content, referenceDate) {
     s = s.replace(/\*+\s*/g, '');
     // remove labels like "Staff in charge:" or "Staff:" or "- Staff:"
     s = s.replace(/^(staff in charge:\s*|staff[:\s]*)/i, '');
+    // Strip channel mentions/names that may leak into parsed staff lines
+    s = s.replace(/<#\d+>/g, '').trim();
+    // If this is the footer line ("ping me to claim"), treat as not-a-staff assignment
+    if (/\bping\s+me\s+to\s+claim\b/i.test(s) || /\bclaim\s+in\b/i.test(s)) return '';
     // remove discord channel/message links that sometimes leak into staff text
     s = s.replace(/https?:\/\/discord\.com\/channels\/\d+\/\d+\/\d+/gi, '').trim();
     s = s.replace(/https?:\/\/discord\.com\/channels\/\d+\/\d+/gi, '').trim();
@@ -998,6 +1658,70 @@ function parseSessionMessage(content, referenceDate) {
     s = s.replace(/\s+/g, ' ').trim();
     return s;
   }
+
+  // Format support:
+  // Session 1
+  // Registration: 15:30
+  // First Game: 15:40
+  // (with optional bullets/markup)
+  try {
+    const sessionBlocks = [];
+    let current = null;
+
+    const parseTimeTokenMs = (token) => {
+      const t = String(token || '').trim();
+      const tsMatch = t.match(/^<t:(\d+):t>$/i);
+      if (tsMatch) return Number(tsMatch[1]) * 1000;
+      const hhmm = t.match(/^([0-2]?\d):([0-5]\d)$/);
+      if (!hhmm) return null;
+      const ref = referenceDate instanceof Date ? new Date(referenceDate) : new Date();
+      const d = new Date(ref);
+      d.setHours(Number(hhmm[1]), Number(hhmm[2]), 0, 0);
+      return d.getTime();
+    };
+
+    for (const rawLine of lines) {
+      const line = String(rawLine || '')
+        .replace(/^[\s>*•◦\-–—]+/, '')
+        .replace(/[*_`~]/g, '')
+        .trim();
+      if (!line) continue;
+
+      const sessionHeader = line.match(/^session\s*(\d+)/i);
+      if (sessionHeader) {
+        if (current && current.reg != null && current.game != null) sessionBlocks.push(current);
+        current = { index: Number(sessionHeader[1]), reg: null, game: null, staff: '' };
+        continue;
+      }
+
+      if (!current) continue;
+
+      const regMatch = line.match(/registration\D*(<t:\d+:t>|[0-2]?\d:[0-5]\d)/i);
+      if (regMatch) {
+        const ms = parseTimeTokenMs(regMatch[1]);
+        if (ms != null) current.reg = ms;
+        continue;
+      }
+
+      const gameMatch = line.match(/first\s*game\D*(<t:\d+:t>|[0-2]?\d:[0-5]\d)/i);
+      if (gameMatch) {
+        const ms = parseTimeTokenMs(gameMatch[1]);
+        if (ms != null) current.game = ms;
+        continue;
+      }
+    }
+    if (current && current.reg != null && current.game != null) sessionBlocks.push(current);
+
+    if (sessionBlocks.length) {
+      for (const b of sessionBlocks) {
+        let reg = Number(b.reg);
+        let game = Number(b.game);
+        if (game <= reg) game += 24 * 60 * 60 * 1000;
+        sessions.push({ index: Number(b.index), start: reg, end: game, staff: normalizeStaffText(b.staff || '') });
+      }
+    }
+  } catch (e) { /* ignore block parse failures */ }
+
   // Announcement-style messages and the new markdown templates (blockquote + bold), e.g.:
   // > * **Registration Opens:** <Time>
   // > * **Game 1/3:** <Time>
@@ -1196,7 +1920,8 @@ function parseSessionMessage(content, referenceDate) {
           let staff = '';
           try {
             const after = norm.slice(timePairRegex.lastIndex, timePairRegex.lastIndex + 200);
-            const staffMatch = after.match(/(?:staff|leitung|team)[:\s]*([^\n\r]{1,120})/i);
+            // Require a label like "Staff:" (avoid matching words like "#staff-chat")
+            const staffMatch = after.match(/\b(?:staff|leitung|team)\b\s*[:\-–]\s*([^\n\r]{1,120})/i);
             if (staffMatch) staff = staffMatch[1] ? staffMatch[1].trim() : staffMatch[0];
           } catch (e) {}
           if (startTs && endTs) sessions.push({ index: idxFound, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
@@ -1206,25 +1931,73 @@ function parseSessionMessage(content, referenceDate) {
       // ignore fallback errors
     }
   }
-  // Sort by start time then index, dedupe identical time slots, and reindex sequentially
-  let ordered = sessions.slice().sort((a, b) => {
-    const sa = typeof a.start === 'number' ? a.start : 0;
-    const sb = typeof b.start === 'number' ? b.start : 0;
-    if (sa !== sb) return sa - sb;
-    return (a.index || 0) - (b.index || 0);
-  });
+  // Order + normalize across midnight.
+  // For numbered session lists we want to preserve the original 1..N order,
+  // and if times go "backwards" (e.g. 22:45 then 00:45) treat the later ones as next-day.
+  const hasIndex = sessions.some(s => Number.isFinite(Number(s && s.index)));
+  let ordered;
+  if (hasIndex) {
+    ordered = sessions.slice().sort((a, b) => {
+      const ia = Number.isFinite(Number(a && a.index)) ? Number(a.index) : 9999;
+      const ib = Number.isFinite(Number(b && b.index)) ? Number(b.index) : 9999;
+      if (ia !== ib) return ia - ib;
+      const sa = typeof a.start === 'number' ? a.start : 0;
+      const sb = typeof b.start === 'number' ? b.start : 0;
+      return sa - sb;
+    });
+
+    const DAY = 24 * 60 * 60 * 1000;
+    let dayOffset = 0;
+    let prevStart = null;
+    ordered = ordered.map((s) => {
+      if (!s || typeof s.start !== 'number' || typeof s.end !== 'number') return s;
+      let start = s.start + dayOffset;
+      let end = s.end + dayOffset;
+      // If the next slot would be earlier than the previous, roll it to the next day.
+      if (typeof prevStart === 'number' && (start + 60_000) < prevStart) {
+        dayOffset += DAY;
+        start += DAY;
+        end += DAY;
+      }
+      prevStart = start;
+      return Object.assign({}, s, { start, end });
+    });
+  } else {
+    // No reliable numbering: sort by time.
+    ordered = sessions.slice().sort((a, b) => {
+      const sa = typeof a.start === 'number' ? a.start : 0;
+      const sb = typeof b.start === 'number' ? b.start : 0;
+      if (sa !== sb) return sa - sb;
+      return (a.index || 0) - (b.index || 0);
+    });
+  }
+
+  // Dedupe identical time slots (preserve first occurrence in the chosen order)
   const seen = new Set();
+  const keyToPos = new Map();
   const deduped = [];
   for (const s of ordered) {
-    const key = `${s.start || 0}-${s.end || 0}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    deduped.push(s);
+    const key = `${s && s.start ? s.start : 0}-${s && s.end ? s.end : 0}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      keyToPos.set(key, deduped.length);
+      deduped.push(s);
+      continue;
+    }
+    // If we already have the slot but the existing one has no staff,
+    // prefer the duplicate that includes staff info.
+    const pos = keyToPos.get(key);
+    if (typeof pos === 'number' && deduped[pos]) {
+      const existingStaff = String(deduped[pos].staff || '').trim();
+      const incomingStaff = String(s && s.staff ? s.staff : '').trim();
+      if (!existingStaff && incomingStaff) {
+        deduped[pos] = { ...deduped[pos], staff: s.staff };
+      }
+    }
   }
-  const needsReindex = deduped.some((s, i) => Number(s.index) !== i + 1);
-  if (needsReindex) {
-    return deduped.map((s, i) => ({ ...s, index: i + 1 }));
-  }
+
+  const needsReindex = deduped.some((s, i) => Number(s && s.index) !== i + 1);
+  if (needsReindex) return deduped.map((s, i) => ({ ...s, index: i + 1 }));
   return deduped;
 }
 
@@ -1436,6 +2209,112 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message, Partials.User, Partials.GuildMember]
 });
 
+// Anti-spam: if a user sends >5 messages in a row in the same channel, delete them and timeout for 1 minute.
+const SPAM_STREAK_LIMIT = 5; // "more than 5" => 6 triggers
+const SPAM_STREAK_RESET_MS = 15_000;
+const SPAM_TIMEOUT_MS = 60_000;
+const spamStreakByChannel = new Map(); // key guildId:channelId -> { lastAuthorId, lastTs, ids: [] }
+
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message || !message.guild || message.author?.bot) return;
+    if (!message.channelId) return;
+    if (!message.member) return;
+
+    // Exempt staff/mods
+    try {
+      if (message.member.permissions?.has?.(PermissionsBitField.Flags.ManageMessages)) return;
+      if (message.member.permissions?.has?.(PermissionsBitField.Flags.ManageGuild)) return;
+      if (message.member.permissions?.has?.(PermissionsBitField.Flags.ModerateMembers)) return;
+    } catch (e) {}
+
+    const now = Date.now();
+    const key = `${message.guild.id}:${message.channelId}`;
+    const st = spamStreakByChannel.get(key) || { lastAuthorId: null, lastTs: 0, ids: [] };
+
+    const sameAuthor = (st.lastAuthorId && String(st.lastAuthorId) === String(message.author.id));
+    const withinWindow = st.lastTs && ((now - st.lastTs) <= SPAM_STREAK_RESET_MS);
+
+    if (!sameAuthor || !withinWindow) {
+      st.lastAuthorId = message.author.id;
+      st.ids = [];
+    }
+
+    st.lastAuthorId = message.author.id;
+    st.lastTs = now;
+    st.ids.push(String(message.id));
+    if (st.ids.length > 20) st.ids = st.ids.slice(-20);
+
+    spamStreakByChannel.set(key, st);
+
+    if (st.ids.length <= (SPAM_STREAK_LIMIT + 1)) {
+      // still below trigger (or exactly 6 will trigger below)
+    }
+
+    if (st.ids.length > SPAM_STREAK_LIMIT) {
+      // Trigger: delete the whole streak we tracked
+      const idsToDelete = Array.from(new Set(st.ids));
+
+      // best-effort delete
+      try {
+        if (typeof message.channel?.bulkDelete === 'function') {
+          await message.channel.bulkDelete(idsToDelete, true).catch(() => null);
+        } else {
+          for (const mid of idsToDelete) {
+            try {
+              const m = await message.channel.messages.fetch(mid).catch(() => null);
+              if (m) await m.delete().catch(() => {});
+            } catch (e) {}
+          }
+        }
+      } catch (e) {}
+
+      // timeout 1 minute
+      let timedOut = false;
+      try {
+        const mm = await message.guild.members.fetch(message.author.id).catch(() => null);
+        if (mm && typeof mm.timeout === 'function') {
+          await mm.timeout(SPAM_TIMEOUT_MS, `AutoMod: Spam (${idsToDelete.length} messages in a row)`);
+          timedOut = true;
+          try { markRecentModAction(message.guild.id, 'Mute', message.author.id, '*'); } catch (e) {}
+        }
+      } catch (e) {}
+
+      // Unified modlog + actions.md
+      try {
+        if (timedOut) {
+          const caseId = createModlogCase({
+            guild: message.guild,
+            type: 'AutoMute',
+            userId: message.author.id,
+            moderatorId: 'AutoMod',
+            reason: `Spam: ${idsToDelete.length} messages in a row`,
+            durationMs: SPAM_TIMEOUT_MS,
+            extra: { channelId: String(message.channelId) }
+          });
+
+          const embed = buildSmallModerationEmbed({
+            title: 'Nutzer gemutet (Spam)',
+            targetId: message.author.id,
+            targetAvatarUrl: message.author.displayAvatarURL ? message.author.displayAvatarURL({ extension: 'png', size: 256 }) : null,
+            moderatorId: 'AutoMod',
+            reason: `Spam: ${idsToDelete.length} Nachrichten in Folge`,
+            caseId,
+            durationText: '1 Minute',
+            nowTs: Math.floor(now / 1000)
+          });
+          await sendLog(message.guild, { embeds: [embed], category: 'moderation' }).catch(() => {});
+        }
+      } catch (e) {}
+
+      // reset state for this channel
+      spamStreakByChannel.set(key, { lastAuthorId: null, lastTs: 0, ids: [] });
+    }
+  } catch (e) {
+    console.error('anti-spam handler failed', e);
+  }
+});
+
 // Prevent uncaught errors from crashing the process
 client.on('error', (err) => {
   console.error('Discord client error', err);
@@ -1447,7 +2326,7 @@ process.on('uncaughtException', (err) => {
   console.error('Uncaught Exception:', err);
 });
 
-// Central Automod: run early to remove invite links and racist content, attempt mute, always log
+// Central Automod: run early to remove racist/blocked content, attempt mute, always log
 client.on('messageCreate', async (message) => {
   try {
     if (!message || !message.guild || message.author?.bot) return;
@@ -1460,21 +2339,15 @@ client.on('messageCreate', async (message) => {
     // Fetch member info (we will enforce automod for all non-bot users)
     const member = await message.guild.members.fetch(message.author.id).catch(()=>null);
 
-    // Detect invite links
-    const inviteRe = /(https?:\/\/)?(www\.)?(discord\.gg|discordapp\.com\/invite|discord\.com\/invite)\/[A-Za-z0-9-_]+/i;
-    const hasInvite = inviteRe.test(text);
+    // Invite-link automod is intentionally disabled: do not delete/timeout just for links.
+    const hasInvite = false;
 
     // Detect racist/blocked terms (configurable via AUTOMOD_CONFIG.blockedWords)
-    const defaultBlocked = ['nigger','nigga','kike','chink','spic','coon', 'bitch', 'idiot', 'stupid', 'dumb', 'asshole', 'shit', 'fuck', 'cunt', 'twat', 'moron', 'trash'];
-    const blocked = (AUTOMOD_CONFIG.blockedWords && Array.isArray(AUTOMOD_CONFIG.blockedWords)) ? AUTOMOD_CONFIG.blockedWords : defaultBlocked;
-    const lc = text.toLowerCase();
-    let hasRacist = false;
-    const matchedWords = [];
-    for (const w of blocked) {
-      if (!w) continue;
-      const re = new RegExp('\\b' + w.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&') + '\\b', 'i');
-      if (re.test(lc)) { hasRacist = true; matchedWords.push(w); }
-    }
+    const blocked = (AUTOMOD_CONFIG && Array.isArray(AUTOMOD_CONFIG.blockedWords))
+      ? AUTOMOD_CONFIG.blockedWords
+      : DEFAULT_AUTOMOD_BLOCKED_WORDS;
+    const matchedWords = automodFindBlockedMatches(text, blocked);
+    const hasRacist = matchedWords.length > 0;
 
     if (!hasInvite && !hasRacist) {
       // no match
@@ -1501,7 +2374,7 @@ client.on('messageCreate', async (message) => {
     // Prepare reason parts for embed
     const reasonParts = [];
     if (hasInvite) reasonParts.push('Invite-Link');
-    if (hasRacist) reasonParts.push(`Rassistische Inhalte${matchedWords.length?` (${matchedWords.slice(0,4).join(', ')})`:''}`);
+    if (hasRacist) reasonParts.push(`Rassistische Inhalte${matchedWords.length ? ` (${matchedWords.length})` : ''}`);
 
     // Attempt to timeout (mute) the member for configured minutes (default 2) if bot has permission
     let muted = false;
@@ -1515,6 +2388,7 @@ client.on('messageCreate', async (message) => {
         if (mm && typeof mm.timeout === 'function' && muteMinutes && muteMinutes > 0) {
           await mm.timeout(muteMinutes * 60 * 1000, `Automod enforcement: ${reasonParts.join(' + ')}`);
           muted = true;
+          try { markRecentModAction(message.guild?.id, 'Mute', message.author.id, '*'); } catch (e) {}
         }
       } else {
         muted = false;
@@ -1566,18 +2440,19 @@ client.on('messageCreate', async (message) => {
         .setTitle('Automod — Nachricht entfernt')
         .setColor(0xE74C3C)
         .addFields(
-          { name: 'User', value: `${message.author.tag} (<@${message.author.id}>)`, inline: true },
-          { name: 'Channel', value: `${message.guild ? `${message.guild.name} / #${message.channel.name}` : message.channel.id}`, inline: true },
-          { name: 'Grund', value: reasonParts.length ? reasonParts.join(' + ') : 'Unbekannt', inline: false },
-          { name: 'Matched', value: matchedWords.length ? matchedWords.slice(0,8).join(', ') : '—', inline: false },
+          {
+            name: 'Meta',
+            value: `User: ${message.author.tag} (<@${message.author.id}>)\nChannel: ${message.guild ? `${message.guild.name} / #${message.channel.name}` : message.channel.id}\nGrund: ${reasonParts.length ? reasonParts.join(' + ') : 'Unbekannt'}\nMatched: ${matchedWords.length ? matchedWords.slice(0, 8).map(automodMaskWord).join(', ') : '—'}`,
+            inline: false
+          },
           { name: 'Inhalt', value: text.substring(0, 1900) || '(leer)', inline: false }
-        ).setTimestamp();
+        )
+        .setTimestamp();
 
       console.log('[automod] detected; deleted:', deleted, 'muted:', muted, 'will log to', logCh ? `${logCh.guild ? logCh.guild.id : 'unknown'}/${logCh.id}` : 'none');
       // add deletion status and timeout info to embed
       try {
-        embed.addFields({ name: 'Gelöscht', value: deleted ? 'Ja' : 'Nein (fehlende Berechtigung)', inline: true });
-        embed.addFields({ name: 'Timeout', value: muted ? `Ja — ${muteMinutes} Minuten` : `Nein${muteError ? ` — Fehler: ${muteError}` : ' (fehlende Berechtigung)'}`, inline: true });
+        embed.addFields({ name: 'Aktion', value: `Gelöscht: ${deleted ? 'Ja' : 'Nein (fehlende Berechtigung)'}\nTimeout: ${muted ? `Ja — ${muteMinutes} Minuten` : `Nein${muteError ? ` — Fehler: ${muteError}` : ' (fehlende Berechtigung)'}`}`, inline: false });
       } catch (e) {}
       if (logCh && typeof logCh.send === 'function') await logCh.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch((err) => { console.error('automod send failed', err); });
     } catch (e) { console.error('automod log failed', e); }
@@ -1683,7 +2558,11 @@ client.on('messageCreate', async (message) => {
         console.log('[session-debug] ignoring self-authored message to avoid duplicate processing');
         return;
       }
-      const allowBotInWatch = message.channel && (String(message.channel.id) === '1461370702895779945' || String(message.channel.id) === '1461370812639481888');
+      let allowBotInWatch = false;
+      try {
+        const watch = loadWatchChannels(message.guildId);
+        allowBotInWatch = message.channel && watch && watch.has(String(message.channel.id));
+      } catch (e) { allowBotInWatch = false; }
       if (!allowBotInWatch && !isWebhook) {
         console.log('[session-debug] skipping other bot message');
         return;
@@ -1692,6 +2571,10 @@ client.on('messageCreate', async (message) => {
     if (!message.channel) return;
     if (!contentText && !message._isSeed) {
       console.log('[session-debug] no text content to parse (no content and no embed text)');
+      return;
+    }
+    if (isClaimPanelLikeMessage(message, contentText)) {
+      console.log('[session-debug] skipping claim-panel-like message');
       return;
     }
 
@@ -1713,7 +2596,7 @@ client.on('messageCreate', async (message) => {
             { name: 'Slash example', value: '/session create type:alpha registration_time:1768568400 game_time:1768569300 staff:@Rakim links:"https://..."', inline: false },
             { name: 'Prefix example', value: '!session testpost alpha "1. 17:00 - 17:15\nStaff: @Rakim"', inline: false },
             { name: 'Admin', value: 'watch/migrate/cancel/remindnow/simulate should be used by admins only.', inline: false },
-            { name: 'Logs', value: 'All session logs are posted to channel <#1461475110761533451> as light-blue embeds.', inline: false }
+            { name: 'Logs', value: 'All session logs are posted to channel <#1469760090151063754> as light-blue embeds.', inline: false }
           )
           .setFooter({ text: 'For more details: use /session help or !session help' })
           .setTimestamp();
@@ -1763,7 +2646,7 @@ client.on('messageCreate', async (message) => {
           const mode = (args.shift() || '').toLowerCase();
             const rest = args.join(' ');
             const processedRest = rest.replace(/\\n/g, '\n');
-          const fakeChannelId = (mode === 'alpha') ? '1461370812639481888' : (mode === 'beta' ? '1461370702895779945' : message.channel.id);
+          const fakeChannelId = (mode === 'alpha') ? '1469754683760316614' : (mode === 'beta' ? '1469754640777347176' : message.channel.id);
           const fakeChannel = { id: fakeChannelId, send: async () => {}, isTextBased: () => true };
             const fakeMsg = { id: `sim_${Date.now()}`, author: message.author, content: processedRest, channel: fakeChannel, createdAt: new Date(), react: async () => {}, _isSeed: true };
           try {
@@ -2012,6 +2895,7 @@ client.on('messageCreate', async (message) => {
     const WATCH_CHANNEL_IDS = loadWatchChannels(message.guildId);
     const channelIdStr = String(message.channel.id);
     const channelName = String(message.channel?.name || '').toLowerCase();
+    const isPreRegSource = PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS.has(channelIdStr);
     const isWatched = WATCH_CHANNEL_IDS.has(channelIdStr);
     const looksLikeSession = /\b\d+\.\s*[0-2]?\d:[0-5]\d\s*(?:-|–|to)\s*[0-2]?\d:[0-5]\d\b|registration\s*opens|game\s*1\/3|duo\s*practice\s*session|<t:\d+:t>/i.test(contentText);
     const nameLooksLikeSession = /(alpha|beta|session|sessions|claim|claiming)/i.test(channelName);
@@ -2019,7 +2903,7 @@ client.on('messageCreate', async (message) => {
     try {
       console.log('[session-debug] watch check:', { WATCH_CHANNEL_IDS: Array.from(WATCH_CHANNEL_IDS).slice(0,20), channelIdStr, channelName, isWatched, looksLikeSession, nameLooksLikeSession });
     } catch (e) {}
-    if (!isWatched && !(looksLikeSession && nameLooksLikeSession)) {
+    if (!isWatched && !isPreRegSource && !(looksLikeSession && nameLooksLikeSession)) {
       console.log('[session-debug] skipping: channel not watched and does not look like session');
       return;
     }
@@ -2031,10 +2915,28 @@ client.on('messageCreate', async (message) => {
       return;
     }
 
+    // Special flow: when sessions are posted in the configured channel,
+    // automatically send the announcement 1 hour before registration.
+    try {
+      schedulePreRegistrationAnnouncements({
+        originMessageId: message.id,
+        originChannelId: message.channel && message.channel.id,
+        guildId: message.guildId || (message.guild && message.guild.id) || null,
+        raw: originalRawFull,
+        sessions
+      });
+    } catch (e) {}
+
+    // In announcement source channel we only schedule auto-claim panels.
+    // Do not post any in-channel "Session parsed" summaries/buttons there.
+    if (PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS.has(channelIdStr)) {
+      return;
+    }
+
     // Hard guarantee: in the two session-claiming channels, always post a fresh parsed summary with buttons
     try {
-      const forceChannels = new Set(['1461370702895779945', '1461370812639481888']);
-      if (message.channel && forceChannels.has(String(message.channel.id))) {
+      const forceChannels = loadWatchChannels(message.guildId);
+      if (message.channel && forceChannels && forceChannels.has(String(message.channel.id))) {
         const lines = sessions.map(s => `• ${s.index}. <t:${Math.floor(s.start/1000)}:t> - <t:${Math.floor(s.end/1000)}:t> — Staff: ${s.staff || 'Unassigned'}`);
         const sumEmbed = new EmbedBuilder()
           .setTitle('Session parsed')
@@ -2189,7 +3091,6 @@ client.on('messageCreate', async (message) => {
         .setTimestamp();
       // Do not DM the author automatically when they post the announcement.
       // Previously the bot attempted to DM the author a parsed summary; that behavior was removed per request.
-      try { await message.react('✅'); } catch (e) {}
       try {
         // Build a detailed sessions log embed containing the raw announcement and parsed sessions
         const raw = originalRawFull.substring(0, 1900);
@@ -2586,6 +3487,111 @@ client.on('interactionCreate', async (interaction) => {
       return;
     }
     // Create ticket from panel button
+    if (interaction.isButton() && typeof interaction.customId === 'string' && (interaction.customId.startsWith('staffpanel_lobby_claim:') || interaction.customId.startsWith('staffpanel_lobby_unclaim:') || interaction.customId.startsWith('staffpanel_toggle:') || interaction.customId.startsWith('staffpanel_claim:') || interaction.customId.startsWith('staffpanel_unclaim:'))) {
+      try {
+        await interaction.deferReply({ ephemeral: true });
+        const parts = String(interaction.customId || '').split(':');
+        const isLobbyMode = parts[0] === 'staffpanel_lobby_claim' || parts[0] === 'staffpanel_lobby_unclaim';
+        const isToggle = parts[0] === 'staffpanel_toggle';
+        const legacyUnclaim = parts[0] === 'staffpanel_unclaim';
+        const msgId = String(parts[1] || interaction.message?.id || '');
+        const targetSession = isToggle ? Number(parts[2] || 0) : 0;
+        if (!msgId || msgId === 'pending') return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Panel not ready yet.')], ephemeral: true });
+
+        const state = preRegStaffPanels.get(msgId);
+        if (!state) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Panel expired or not found.')], ephemeral: true });
+
+        const member = interaction.guild ? await interaction.guild.members.fetch(interaction.user.id).catch(() => null) : null;
+        const requiredRoleId = String(state.claimRoleId || PRE_REG_CLAIM_ROLE_ID);
+        const hasHSRole = !!(member && member.roles && member.roles.cache && member.roles.cache.has(requiredRoleId));
+        const isAdmin = !!(member && member.permissions && member.permissions.has(PermissionsBitField.Flags.ManageGuild));
+        if (!hasHSRole && !isAdmin) {
+          return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Only HS can claim this session.')], ephemeral: true });
+        }
+
+        if (!Array.isArray(state.claims)) state.claims = [];
+
+        if (isLobbyMode || String(state.panelType || '') === 'staff-lobby') {
+          const uid = String(interaction.user.id);
+          const isUnclaim = parts[0] === 'staffpanel_lobby_unclaim';
+          const idx = state.claims.indexOf(uid);
+          let info = '';
+
+          if (isUnclaim) {
+            if (idx === -1) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('You have no claimed lobby to unclaim.')], ephemeral: true });
+            state.claims.splice(idx, 1);
+            info = 'You unclaimed your lobby.';
+          } else {
+            if (idx !== -1) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('You already claimed a lobby. Use Unclaim first.')], ephemeral: true });
+            state.claims.push(uid);
+            info = `You claimed Lobby ${state.claims.length}.`;
+          }
+
+          const rows = buildPreRegPanelRow(msgId);
+          upsertPreRegPanelState(msgId, state);
+          try { await interaction.message.edit({ embeds: [buildPreRegPanelEmbed(state)], components: rows, allowedMentions: { parse: ['users'] } }); } catch (e) {}
+          return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(info)], ephemeral: true });
+        }
+
+        if (!Array.isArray(state.sessions) || !state.sessions.length) {
+          state.sessions = [{
+            sessionIndex: Number(state.sessionIndex || 1),
+            regTs: Number(state.regTs || 0),
+            gameTs: Number(state.gameTs || 0),
+            supervisorId: String(state.supervisorId || ((state.claims && state.claims[0]) ? state.claims[0] : '') || ''),
+          }];
+        }
+
+        const uid = String(interaction.user.id);
+        const sessionsSorted = state.sessions.slice().sort((a, b) => Number(a.sessionIndex || 0) - Number(b.sessionIndex || 0));
+        const sessionObj = targetSession
+          ? sessionsSorted.find(s => Number(s.sessionIndex || 0) === Number(targetSession))
+          : sessionsSorted[0];
+        if (!sessionObj) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Session not found in this panel.')], ephemeral: true });
+
+        const currentSupervisor = String(sessionObj.supervisorId || '');
+        const claimedByUser = sessionsSorted.filter(s => String(s.supervisorId || '') === uid);
+        const alreadyClaimedAny = claimedByUser[0] || null;
+        const claimedCount = claimedByUser.length;
+        const maxClaimsPerUser = Math.max(1, Number(state.maxClaimsPerUser || 1));
+        const isUnclaim = isToggle ? !!currentSupervisor : legacyUnclaim;
+        let info = '';
+
+        if (isUnclaim) {
+          if (!currentSupervisor) return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('No HS claimed this session yet.')], ephemeral: true });
+          if (currentSupervisor !== uid) {
+            return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Session already claimed by <@${currentSupervisor}>.`)], ephemeral: true });
+          }
+          sessionObj.supervisorId = null;
+          state.supervisorId = null;
+          state.claims = sessionsSorted.filter(s => s.supervisorId).map(s => String(s.supervisorId));
+          info = `Session ${sessionObj.sessionIndex} unclaimed.`;
+        } else {
+          if (currentSupervisor && currentSupervisor !== uid) {
+            return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`Session already claimed by <@${currentSupervisor}>.`)], ephemeral: true });
+          }
+          if (claimedCount >= maxClaimsPerUser && String(currentSupervisor || '') !== String(uid || '')) {
+            return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`You can claim maximum ${maxClaimsPerUser} sessions.`)], ephemeral: true });
+          }
+          if (currentSupervisor === uid || (alreadyClaimedAny && Number(alreadyClaimedAny.sessionIndex || 0) === Number(sessionObj.sessionIndex || 0))) {
+            return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(`You already claimed Session ${sessionObj.sessionIndex}.`)], ephemeral: true });
+          }
+          sessionObj.supervisorId = uid;
+          state.supervisorId = uid;
+          state.claims = sessionsSorted.filter(s => s.supervisorId).map(s => String(s.supervisorId));
+          info = `You claimed Session ${sessionObj.sessionIndex}.`;
+        }
+
+        const rows = buildPreRegPanelRow(msgId);
+        upsertPreRegPanelState(msgId, state);
+        try { await interaction.message.edit({ embeds: [buildPreRegPanelEmbed(state)], components: rows, allowedMentions: { parse: ['users'] } }); } catch (e) {}
+        return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription(info)], ephemeral: true });
+      } catch (e) {
+        console.error('staff panel button failed', e);
+        try { return interaction.editReply({ embeds: [new EmbedBuilder().setColor(0x87CEFA).setDescription('Failed to update staff panel.')], ephemeral: true }); } catch (ee) { return; }
+      }
+    }
+
     // session claim buttons handling (customId: session_claim:<messageId>)
     if (interaction.isButton() && typeof interaction.customId === 'string' && interaction.customId.startsWith('session_claim:')) {
       try {
@@ -2711,9 +3717,9 @@ client.on('interactionCreate', async (interaction) => {
           let gameTs = null;
           let regTs = null;
           if (sess && sess.start) {
-            gameTs = Math.floor(sess.start / 1000);
-            // Default registration opens 15 minutes before selected session
-            regTs = gameTs - (15 * 60);
+            regTs = Math.floor(sess.start / 1000);
+            const maybeEndTs = Math.floor(Number(sess.end || 0) / 1000);
+            gameTs = (Number.isFinite(maybeEndTs) && maybeEndTs > regTs) ? maybeEndTs : (regTs + (10 * 60));
           }
           try {
             if (!gameTs && data.raw) {
@@ -2752,13 +3758,43 @@ client.on('interactionCreate', async (interaction) => {
           }
         } catch (e) {}
 
-        // DM the announcement to the clicker
+        // DM the announcement to the clicker (chunked to respect Discord 2000-char limit)
         try {
-          const safeContent = String(contentToSend || '').substring(0, 4000);
-          await interaction.user.send({ content: safeContent }).catch(()=>null);
+          const safeContent = String(contentToSend || '').substring(0, 8000);
+          await sendChunkedDM(interaction.user, safeContent, 2000);
           await interaction.editReply({ content: 'Announcement sent via DM.', ephemeral: true });
-          try { const emb = new EmbedBuilder().setTitle('Session announced (DM)').setColor(0x87CEFA).addFields({ name: 'By', value: `<@${interaction.user.id}>`, inline: true }, { name: 'Session', value: `${sessionIndex || 'n/a'}`, inline: true }).setTimestamp(); await sendSessionsLog({ embeds: [emb] }, interaction.guildId); await sendMessageLog(emb, interaction.guildId); } catch (e) { console.error('failed to log announce DM', e); }
-        } catch (e) { console.error('failed to DM announcement', e); return interaction.editReply({ content: 'Failed to send the announcement via DM.', ephemeral: true }); }
+          try {
+            const emb = new EmbedBuilder()
+              .setTitle('Session announced (DM)')
+              .setColor(0x87CEFA)
+              .addFields(
+                { name: 'By', value: `<@${interaction.user.id}>`, inline: true },
+                { name: 'Session', value: `${sessionIndex || 'n/a'}`, inline: true }
+              )
+              .setTimestamp();
+            await sendSessionsLog({ embeds: [emb] }, interaction.guildId);
+            await sendMessageLog(emb, interaction.guildId);
+          } catch (e) { console.error('failed to log announce DM', e); }
+        } catch (e) {
+          console.error('failed to DM announcement', e);
+          // Fallback: show the content ephemerally (no mention parsing) so it can be copied
+          try {
+            const safeContent = String(contentToSend || '').substring(0, 8000);
+            const parts = splitDiscordMessage(safeContent, 2000);
+            await interaction.editReply({
+              content: 'Konnte dir keine DM schicken (DMs ggf. aus / Bot blockiert). Hier ist der Text zum Kopieren:',
+              ephemeral: true,
+              allowedMentions: { parse: [] }
+            });
+            for (let i = 0; i < parts.length; i++) {
+              const part = parts[i];
+              if (!part) continue;
+              await interaction.followUp({ content: part, ephemeral: true, allowedMentions: { parse: [] } }).catch(()=>null);
+            }
+          } catch (ee) {
+            return interaction.editReply({ content: 'Failed to send the announcement via DM.', ephemeral: true });
+          }
+        }
 
         return;
       } catch (e) {
@@ -3133,21 +4169,21 @@ function buildSmallModerationEmbed({
   const reasonShort = r ? r.substring(0, 240) : '';
   const modText = moderatorId ? `<@${moderatorId}> (${moderatorId})` : 'Unbekannt';
 
+  const metaBits = [];
+  metaBits.push(`Moderator: ${modText}`);
+  if (durationText) metaBits.push(`Dauer: ${String(durationText).substring(0, 120)}`);
+  metaBits.push(`Zeit: <t:${ts}:R>`);
+
   const embed = new EmbedBuilder()
     .setTitle(title || 'Moderation')
-    .setDescription(targetId ? `<@${targetId}>${reasonShort ? `\nGrund: ${reasonShort}` : ''}` : (reasonShort ? `Grund: ${reasonShort}` : ''))
+    .setDescription(
+      targetId
+        ? `<@${targetId}>${reasonShort ? `\nGrund: ${reasonShort}` : ''}\n${metaBits.join(' | ')}`
+        : `${reasonShort ? `Grund: ${reasonShort}\n` : ''}${metaBits.join(' | ')}`
+    )
     .setColor(0x87CEFA);
 
   if (targetAvatarUrl) embed.setThumbnail(targetAvatarUrl);
-
-  const fields = [
-    { name: 'Moderator', value: modText, inline: true },
-  ];
-
-  if (durationText) fields.push({ name: 'Dauer', value: String(durationText).substring(0, 120), inline: true });
-  fields.push({ name: 'Zeit', value: `<t:${ts}:R>`, inline: true });
-
-  embed.addFields(fields);
 
   const footerBits = [];
   if (targetId) footerBits.push(`UserID: ${targetId}`);
@@ -3188,6 +4224,8 @@ client.on('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
   console.log(Date());
   console.log(`🔥 CYBRANCEE Bot is online!`);
+  try { initPreRegScheduler(); } catch (e) {}
+  try { initPreRegPanelStates(); } catch (e) {}
 
   // Seed voice activity sessions for members already in voice.
   try { voiceActivity.seedFromClient(client); } catch (e) {}
@@ -4024,22 +5062,55 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
         } catch (e) {}
         if (!reason) reason = 'No reason provided';
 
+        // Do not create cases/logs for Discord AutoMod "Posting link". This is server-side automod
+        // and should be disabled in Discord settings if you want to stop the timeout itself.
+        try {
+          if (/\bposting\s+link\b/i.test(String(reason || ''))) {
+            return;
+          }
+        } catch (e) {}
+
         // Avoid duplicates when the bot executed the mute/unmute command (that already created a case)
         const dedupeType = isTimedOut ? 'Mute' : 'Unmute';
         if (!hasRecentModAction(newMember.guild.id, dedupeType, newMember.id, moderatorId)) {
           const nowTs = Math.floor(Date.now() / 1000);
           const targetUser = newMember.user;
           if (isTimedOut) {
-            const durationMs = (newTs - now);
+            let durationMs = (newTs - now);
+            let caseId = null;
+
+            // If this timeout was executed by AutoMod (common for link/racism automod),
+            // we already created an AutoMute case elsewhere. Reuse it to avoid duplicate cases.
+            try {
+              if (reason && /\bautomod\b/i.test(String(reason))) {
+                const nowMs = Date.now();
+                const cases = (modlogs && Array.isArray(modlogs.cases)) ? modlogs.cases : [];
+                for (let i = cases.length - 1; i >= 0; i--) {
+                  const c = cases[i];
+                  if (!c) continue;
+                  if (String(c.guildId || '') !== String(newMember.guild.id)) continue;
+                  if (String(c.user || '') !== String(newMember.id)) continue;
+                  if (!['AutoMute', 'Mute'].includes(String(c.type || ''))) continue;
+                  if (!c.time || (nowMs - Number(c.time)) > 30_000) break;
+                  caseId = c.caseId ?? null;
+                  if (typeof c.durationMs === 'number' && c.durationMs > 0) durationMs = c.durationMs;
+                  break;
+                }
+              }
+            } catch (e) {}
+
+            if (!caseId) {
+              caseId = createModlogCase({
+                guild: newMember.guild,
+                type: 'Mute',
+                userId: newMember.id,
+                moderatorId,
+                reason,
+                durationMs
+              });
+            }
+
             const durationText = `${Math.max(1, Math.ceil(durationMs / 60000))} Minuten`;
-            const caseId = createModlogCase({
-              guild: newMember.guild,
-              type: 'Mute',
-              userId: newMember.id,
-              moderatorId,
-              reason,
-              durationMs
-            });
             const embed = buildSmallModerationEmbed({
               title: 'Nutzer gemutet (Timeout)',
               targetId: newMember.id,
@@ -4529,9 +5600,11 @@ client.on('messageDelete', async (message) => {
       .setColor(0x87CEFA)
       .setThumbnail(author && typeof author.displayAvatarURL === 'function' ? author.displayAvatarURL({ extension: 'png', size: 256 }) : null)
       .addFields(
-        { name: 'ID', value: `${message.id}`, inline: true },
-        { name: 'Channel', value: message.channelId ? `<#${message.channelId}>` : 'Unknown', inline: true },
-        { name: 'Time', value: `<t:${nowTs}:R>`, inline: false },
+        {
+          name: 'Meta',
+          value: `ID: ${message.id}\nChannel: ${message.channelId ? `<#${message.channelId}>` : 'Unknown'}\nTime: <t:${nowTs}:R>`,
+          inline: false
+        },
         { name: 'Content', value: content ? content.substring(0, 700) : '—', inline: false }
       );
     await logCh.send({ embeds: [embed] }).catch(() => {});
@@ -4628,10 +5701,11 @@ client.on('messageUpdate', async (oldMessage, newMessage) => {
           const existing = sessionOriginToPosted.get(String(editedId)) || Array.from(sessionPostData.values()).find(v => String(v.originMessageId || '') === String(editedId));
           const channelId = (newFetched && newFetched.channelId) || (oldFetched && oldFetched.channelId);
           const channelName = String(newFetched?.channel?.name || oldFetched?.channel?.name || '').toLowerCase();
+          const isPreRegSource = PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS.has(String(channelId || ''));
           const isWatched = channelId ? loadWatchChannels(guild.id).has(String(channelId)) : false;
           const looksLikeSession = /\b\d+\s*[\.)-]\s*[0-2]?\d[:.][0-5]\d\s*(?:-|–|—|to)\s*[0-2]?\d[:.][0-5]\d\b|registration\s*opens|game\s*1\/3|duo\s*practice\s*session|<t:\d+:t>/i.test(editedContent);
           const nameLooksLikeSession = /(alpha|beta|session|sessions|claim|claiming)/i.test(channelName);
-          if (!existing && (isWatched || (looksLikeSession && nameLooksLikeSession))) {
+          if (!existing && (isWatched || isPreRegSource || (looksLikeSession && nameLooksLikeSession))) {
             const seedMsg = Object.assign({}, newFetched || oldFetched, { content: editedContent, _isSeed: true });
             try { client.emit('messageCreate', seedMsg); } catch (ee) {}
           }
@@ -4725,6 +5799,37 @@ try {
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+
+  // Natural-language helper: users ask where to put Discord bot token
+  try {
+    const rawMsg = String(message.content || '').trim();
+    if (rawMsg) {
+      const norm = rawMsg.toLowerCase();
+      const asksToken = /\b(token|bot\s*token|discord\s*token)\b/i.test(norm);
+      const asksLocation = /\b(where|wo|ist|is|env|\.env|token\.txt|config\.json|direct|direction|put|rein|eintragen|paste)\b/i.test(norm);
+      const mentionsBot = Boolean(client?.user?.id) && Boolean(message.mentions?.users?.has?.(client.user.id));
+
+      if (asksToken && (asksLocation || mentionsBot)) {
+        const guide = new EmbedBuilder()
+          .setColor(0x87CEFA)
+          .setTitle('Discord Bot Token Setup')
+          .setDescription('Use one of these methods:')
+          .addFields(
+            { name: '1) .env (preferred)', value: 'Create `.env` in project root and add:\n`DISCORD_TOKEN=YOUR_DISCORD_BOT_TOKEN`', inline: false },
+            { name: '2) token.txt', value: 'Create `token.txt` in project root with only the token in one line.', inline: false },
+            { name: '3) Optional env vars', value: '`TOKEN`, `TOKENSP`, `DISCORD_BOT_TOKEN`, `BOT_TOKEN` also work.', inline: false },
+            { name: 'After change', value: 'Restart bot (`npm start`). Staff can run `*env` to see token source.', inline: false },
+          )
+          .setFooter({ text: 'Never post your real token in chat. Regenerate it if leaked.' })
+          .setTimestamp();
+
+        await message.reply({ embeds: [guide], allowedMentions: { parse: [] } }).catch(() => null);
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('token helper failed', e);
+  }
   
 
   // Prefix command: *va / *voiceactivity [1d|7d|30d]
@@ -4889,67 +5994,72 @@ client.on('messageCreate', async (message) => {
       return;
     }
   } catch (e) { console.error('ticket command check failed', e); }
-  // Auto-mod: configurable: prevent users with blocked roles from posting invites/links
+  // Auto-mod (legacy path): prevent users with blocked roles from posting *invite links*.
+  // Link automod is disabled by default; do not delete messages just for containing generic URLs.
   if (message.guild && message.member) {
     try {
       const cfg = AUTOMOD_CONFIG;
-      const isExempt = message.member.permissions.has(PermissionsBitField.Flags.ManageGuild) || message.member.permissions.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions.has(PermissionsBitField.Flags.ManageChannels) || message.member.permissions.has(PermissionsBitField.Flags.ManageRoles);
-      const hasBlocked = cfg.blockedRoles && cfg.blockedRoles.length && message.member.roles.cache.some(r => cfg.blockedRoles.includes(r.name));
-      const hasAllowed = cfg.allowedRoles && cfg.allowedRoles.length && message.member.roles.cache.some(r => cfg.allowedRoles.includes(r.name));
-      if (hasBlocked && !hasAllowed && !isExempt && message.content) {
-        const inviteRe = /(discord(?:\.gg|app\.com\/invite)\/[A-Za-z0-9-]+)/i;
-        const urlRe = /https?:\/\/[^\s]+/i;
-        if (inviteRe.test(message.content) || urlRe.test(message.content)) {
-          try { await message.delete().catch(() => {}); } catch (e) {}
+      if (!cfg || !cfg.blockInviteLinks) {
+        // Explicitly disabled: do nothing here.
+        // (Racist-content deletion is handled in the central automod handler.)
+      } else {
+        const isExempt = message.member.permissions.has(PermissionsBitField.Flags.ManageGuild) || message.member.permissions.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions.has(PermissionsBitField.Flags.ManageChannels) || message.member.permissions.has(PermissionsBitField.Flags.ManageRoles);
+        const hasBlocked = cfg.blockedRoles && cfg.blockedRoles.length && message.member.roles.cache.some(r => cfg.blockedRoles.includes(r.name));
+        const hasAllowed = cfg.allowedRoles && cfg.allowedRoles.length && message.member.roles.cache.some(r => cfg.allowedRoles.includes(r.name));
+        if (hasBlocked && !hasAllowed && !isExempt && message.content) {
+          const inviteRe = /(discord(?:\.gg|app\.com\/invite)\/[A-Za-z0-9-]+)/i;
+          if (inviteRe.test(message.content)) {
+            try { await message.delete().catch(() => {}); } catch (e) {}
 
-          const muteMs = Math.max(0, (cfg.muteMinutes || 2) * 60 * 1000);
-          const reason = inviteRe.test(message.content) ? 'Posting invite link' : 'Posting link';
+            const muteMs = Math.max(0, (cfg.muteMinutes || 2) * 60 * 1000);
+            const reason = 'Posting invite link';
 
-          let timedOut = false;
-          try {
-            await message.member.timeout(muteMs, `AutoMod: ${reason}`);
-            timedOut = true;
-          } catch (e) {
-            timedOut = false;
-            console.error('autmod timeout failed', e);
-          }
-
-          const type = timedOut ? 'AutoMute' : 'AutoModDelete';
-          const caseId = createModlogCase({
-            guild: message.guild,
-            type,
-            userId: message.author.id,
-            moderatorId: 'AutoMod',
-            reason,
-            durationMs: timedOut ? muteMs : undefined,
-            extra: {
-              channelId: message.channel ? String(message.channel.id) : null,
-              messageId: message.id ? String(message.id) : null,
-              timedOut,
-            }
-          });
-
-          if (timedOut) markRecentModAction(message.guild?.id, 'Mute', message.author.id, 'AutoMod');
-
-          // Send a compact DM to the user (only if we actually timed out)
-          if (timedOut) {
+            let timedOut = false;
             try {
-              await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId, durationText: `${cfg.muteMinutes} minutes` });
-            } catch (e) {}
-          }
-
-          try {
-            const logChannel = message.guild.channels.cache.find(c => cfg.logChannelNames.includes(c.name));
-            if (logChannel && logChannel.isText()) {
-              if (timedOut) {
-                await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason}`, caseId)] }).catch(() => {});
-              } else {
-                await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-deleted a message from <@${message.author.id}> — Reason: ${reason}`, caseId)] }).catch(() => {});
-              }
+              await message.member.timeout(muteMs, `AutoMod: ${reason}`);
+              timedOut = true;
+            } catch (e) {
+              timedOut = false;
+              console.error('autmod timeout failed', e);
             }
-          } catch (e) {}
 
-          return;
+            const type = timedOut ? 'AutoMute' : 'AutoModDelete';
+            const caseId = createModlogCase({
+              guild: message.guild,
+              type,
+              userId: message.author.id,
+              moderatorId: 'AutoMod',
+              reason,
+              durationMs: timedOut ? muteMs : undefined,
+              extra: {
+                channelId: message.channel ? String(message.channel.id) : null,
+                messageId: message.id ? String(message.id) : null,
+                timedOut,
+              }
+            });
+
+            if (timedOut) markRecentModAction(message.guild?.id, 'Mute', message.author.id, '*');
+
+            // Send a compact DM to the user (only if we actually timed out)
+            if (timedOut) {
+              try {
+                await sendModEmbedToUser(message.author, 'AutoMute', { guild: message.guild, moderatorTag: 'AutoMod', reason, caseId, durationText: `${cfg.muteMinutes} minutes` });
+              } catch (e) {}
+            }
+
+            try {
+              const logChannel = message.guild.channels.cache.find(c => cfg.logChannelNames.includes(c.name));
+              if (logChannel && logChannel.isText()) {
+                if (timedOut) {
+                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason}`, caseId)] }).catch(() => {});
+                } else {
+                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-deleted a message from <@${message.author.id}> — Reason: ${reason}`, caseId)] }).catch(() => {});
+                }
+              }
+            } catch (e) {}
+
+            return;
+          }
         }
       }
     } catch (e) {
@@ -5122,12 +6232,10 @@ client.on('messageCreate', async (message) => {
       }
 
       // Ban targets (explicit list as requested) — user ID blacklist path
-      const targetGuildIds = [
-        '1459330497938325676',
-        '1459345285317791917',
-        '1368527215343435826',
-        '1339662600903983154',
-      ];
+      const targetGuildIds = Array.from(new Set([
+        String(message.guild && message.guild.id ? message.guild.id : ''),
+        '1323668832862343219',
+      ].filter(Boolean)));
 
       const banAttempts = [];
       for (const gid of targetGuildIds) {
@@ -5172,16 +6280,14 @@ client.on('messageCreate', async (message) => {
       });
 
       const embed = new EmbedBuilder()
-        .setColor(0x87CEFA)
+        .setColor(0xED4245)
         .setTitle('Blacklist')
-        .addFields(
-          { name: 'User', value: `<@${id}> (${id})`, inline: true },
-          { name: 'Reason', value: reason.substring(0, 256), inline: true },
-          { name: 'Moderator', value: `<@${message.author.id}>`, inline: true }
-        )
-        .addFields(
-          { name: 'Success', value: `${success} servers`, inline: true },
-          { name: 'Failed', value: `${failed} servers`, inline: true }
+        .setDescription(
+          `**User:** ${id}\n` +
+          `**Reason:** ${reason.substring(0, 256)}\n` +
+          `**Banned by:** <@${message.author.id}>\n\n` +
+          `**Success:** ${success} servers\n` +
+          `**Failed:** ${failed} servers`
         )
         .setTimestamp()
         .setFooter(buildFooter(message.guild));
@@ -5191,6 +6297,39 @@ client.on('messageCreate', async (message) => {
       }
 
       // Do not list individual server results here; only counts are shown.
+      return message.channel.send({ embeds: [embed] });
+    }
+
+    if (cmd.toLowerCase() === 'dblacklist' || cmd.toLowerCase() === 'dbacklist') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
+      const id = parseId(rest[0]) || rest[0];
+      const reason = rest.slice(1).join(' ') || 'No reason provided';
+      if (!id || !/^\d+$/.test(id)) return replyAsEmbed(message, 'Please provide a valid user ID to dice-blacklist.');
+
+      if (!blacklist || typeof blacklist !== 'object') blacklist = { blacklisted: [] };
+      if (!Array.isArray(blacklist.diceBlacklisted)) blacklist.diceBlacklisted = [];
+
+      const existing = blacklist.diceBlacklisted.find(b => b && String(b.id) === String(id));
+      if (existing) {
+        existing.reason = reason;
+        existing.moderator = message.author.id;
+        existing.time = Date.now();
+      } else {
+        blacklist.diceBlacklisted.push({ id, reason, moderator: message.author.id, time: Date.now() });
+      }
+      saveJson(BLACKLIST_PATH, blacklist);
+
+      const embed = new EmbedBuilder()
+        .setColor(0x87CEFA)
+        .setTitle('Dice Blacklist')
+        .setDescription(`User <@${id}> (${id}) kann *dice nicht mehr nutzen.`)
+        .addFields(
+          { name: 'Reason', value: reason.substring(0, 256), inline: true },
+          { name: 'Moderator', value: `<@${message.author.id}>`, inline: true }
+        )
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
       return message.channel.send({ embeds: [embed] });
     }
 
@@ -5360,12 +6499,10 @@ client.on('messageCreate', async (message) => {
       }
 
       // Unban across the same explicit target guild list as -blacklist
-      const targetGuildIds = [
-        '1459330497938325676',
-        '1459345285317791917',
-        '1368527215343435826',
-        '1339662600903983154',
-      ];
+      const targetGuildIds = Array.from(new Set([
+        String(message.guild && message.guild.id ? message.guild.id : ''),
+        '1323668832862343219',
+      ].filter(Boolean)));
 
       const unbanAttempts = [];
       for (const gid of targetGuildIds) {
@@ -5421,9 +6558,33 @@ client.on('messageCreate', async (message) => {
       return message.channel.send({ embeds: [embed] });
     }
 
+    if (cmd.toLowerCase() === 'dunbll' || cmd.toLowerCase() === 'dunblacklist') {
+      if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) return;
+      const id = parseId(rest[0]) || rest[0];
+      if (!id || !/^\d+$/.test(id)) return replyAsEmbed(message, 'Please provide a valid user ID.');
+
+      if (!blacklist || typeof blacklist !== 'object') blacklist = { blacklisted: [] };
+      if (!Array.isArray(blacklist.diceBlacklisted)) blacklist.diceBlacklisted = [];
+
+      const idx = blacklist.diceBlacklisted.findIndex(b => String(b.id) === String(id));
+      if (idx === -1) return replyAsEmbed(message, 'This ID is not in the dice blacklist.');
+
+      blacklist.diceBlacklisted.splice(idx, 1);
+      saveJson(BLACKLIST_PATH, blacklist);
+
+      const embed = new EmbedBuilder()
+        .setColor(0x87CEFA)
+        .setTitle('Dice Unblacklist')
+        .setDescription(`User <@${id}> (${id}) kann *dice wieder nutzen.`)
+        .addFields({ name: 'Removed by', value: `<@${message.author.id}>`, inline: true })
+        .setTimestamp()
+        .setFooter(buildFooter(message.guild));
+
+      return message.channel.send({ embeds: [embed] });
+    }
+
     if (cmd.toLowerCase() === 'bll') {
       if (!message.member.permissions.has(PermissionsBitField.Flags.ManageMessages)) return;
-
       if (!blacklist.blacklisted.length) return replyAsEmbed(message, 'Blacklist is empty.');
 
       const arg = rest[0] ? (parseId(rest[0]) || rest[0]) : null;
@@ -5432,30 +6593,23 @@ client.on('messageCreate', async (message) => {
         if (!entry) return replyAsEmbed(message, 'This user is not in the blacklist.');
 
         const embed = new EmbedBuilder()
-          .setTitle('Blacklist Entry')
-            .setColor(0x87CEFA)
-          .addFields(
-            { name: 'User', value: `<@${entry.id}> (${entry.id})`, inline: true },
-            { name: 'Moderator', value: entry.moderator ? `<@${entry.moderator}>` : 'n/a', inline: true },
-            { name: 'When', value: entry.time ? `<t:${Math.floor(entry.time / 1000)}:F> (<t:${Math.floor(entry.time / 1000)}:R>)` : 'n/a', inline: false },
-            { name: 'Reason', value: String(entry.reason || 'No reason provided').substring(0, 1024), inline: false }
+          .setTitle('Blacklist Log')
+          .setColor(0xF1C40F)
+          .setDescription(
+            `**User ID:** ${entry.id}\n` +
+            `**Reason:** ${String(entry.reason || 'No reason provided').substring(0, 256)}\n` +
+            `**Staff:** ${entry.moderator ? `<@${entry.moderator}>` : 'n/a'}${entry.moderator ? ` - ${entry.moderator}` : ''}\n` +
+            `**Date:** ${entry.time ? `<t:${Math.floor(entry.time / 1000)}:F>` : 'n/a'}`
           )
           .setTimestamp()
           .setFooter(buildFooter(message.guild));
-
-        if (Array.isArray(entry.banAttempts) && entry.banAttempts.length) {
-          const lines = entry.banAttempts
-            .map(a => `${a.ok ? '✅' : '❌'} ${a.guildName || 'Unknown'} (${a.guildId})${a.ok ? '' : ` — ${String(a.error || 'failed').substring(0, 80)}`}`)
-            .join('\n');
-          embed.addFields({ name: 'Last ban results', value: lines.substring(0, 1024), inline: false });
-        }
 
         return message.channel.send({ embeds: [embed] });
       }
 
       const embed = new EmbedBuilder()
         .setTitle('Blacklist Logs')
-        .setColor(0x87CEFA)
+        .setColor(0xF1C40F)
         .setFooter({ text: `Total: ${blacklist.blacklisted.length}` })
         .setTimestamp();
 
@@ -5464,7 +6618,7 @@ client.on('messageCreate', async (message) => {
         const reason = b.reason || 'No reason provided';
         embed.addFields({
           name: `User: ${b.id}`,
-          value: `Mod: ${moderator}\nWhen: ${b.time ? `<t:${Math.floor(b.time / 1000)}:R>` : 'n/a'}\nReason: ${String(reason).substring(0, 256)}`.substring(0, 1024)
+          value: `Reason: ${String(reason).substring(0, 256)}\nStaff: ${moderator}\nDate: ${b.time ? `<t:${Math.floor(b.time / 1000)}:F>` : 'n/a'}`.substring(0, 1024)
         });
       }
 
@@ -5545,7 +6699,14 @@ client.on('messageCreate', async (message) => {
       const currentGuildId = String(message.guild.id);
 
       let cases = (modlogs && modlogs.cases) ? Array.from(modlogs.cases) : [];
-      cases = cases.filter(c => String(c.user) === String(targetId) && c.guildId && String(c.guildId) === currentGuildId);
+      // Normally: only show logs for the current server.
+      // Exception: show Blacklist/Unblacklist logs even if executed from another server.
+      cases = cases.filter(c => {
+        if (!c || String(c.user) !== String(targetId)) return false;
+        const t = String(c.type || '').toLowerCase();
+        if (t === 'blacklist' || t === 'unblacklist' || t === 'guildblacklist' || t === 'guildunblacklist') return true;
+        return c.guildId && String(c.guildId) === currentGuildId;
+      });
 
       // Latest first
       cases.sort((a, b) => {
@@ -5561,11 +6722,15 @@ client.on('messageCreate', async (message) => {
       const page = Math.max(1, Math.min(totalPages, pageArg));
       const start = (page - 1) * perPage;
       const pageCases = cases.slice(start, start + perPage);
+      let userLabel = String(targetId);
+      try {
+        const tu = await client.users.fetch(String(targetId)).catch(() => null);
+        if (tu) userLabel = `${tu.username}.`;
+      } catch (e) {}
       const embed = new EmbedBuilder()
-        .setTitle(`Modlogs for ${targetId}`)
+        .setTitle(`Modlogs for ${userLabel}`)
         .setColor(0x87CEFA)
-        .setTimestamp()
-        .setDescription(`Server: **${message.guild.name}** (${currentGuildId})`);
+        .setTimestamp();
       for (const c of pageCases) {
         const ts = c.time ? Math.floor(Number(c.time)/1000) : null;
         const date = ts ? `<t:${ts}:f>` : '';
@@ -5584,10 +6749,20 @@ client.on('messageCreate', async (message) => {
         } catch (e) { moderatorDisplay = String(c.moderator || 'Unknown'); }
 
         const dur = c.durationMs ? ` (${humanDurationLong(c.durationMs)})` : '';
-        const typeLine = `Type: ${String(c.type || 'Unknown')}${dur}`;
+        const typeLine = `Type: ${displayCaseType(c.type)}${dur}`;
         const reasonLine = `Reason: ${String(c.reason || '—')}${date ? ' - ' + date : ''}`;
 
-        embed.addFields({ name: `Case ${c.caseId}`, value: `${typeLine}\nModerator: ${moderatorDisplay}\n${reasonLine}`, inline: false });
+        // If this case came from another guild, show origin server.
+        let originLine = '';
+        try {
+          const gid = c.guildId ? String(c.guildId) : '';
+          if (gid && gid !== currentGuildId) {
+            const g = client.guilds.cache.get(gid) || null;
+            originLine = `Server: ${g ? `${g.name} (${gid})` : gid}`;
+          }
+        } catch (e) {}
+
+        embed.addFields({ name: `Case ${c.caseId}`, value: `${typeLine}${originLine ? `\n${originLine}` : ''}\nModerator: ${moderatorDisplay}\n${reasonLine}`, inline: false });
       }
       embed.setFooter({ text: `Page ${page}/${totalPages} — Showing ${pageCases.length} of ${cases.length}` });
       return message.channel.send({ embeds: [embed] });
@@ -5871,16 +7046,18 @@ client.on('messageCreate', async (message) => {
       .setTimestamp();
 
     helpEmbed.addFields(
-      { name: '📋 General', value: '`*help` — Show this help message\n`*say <text>` — Bot repeats your message\n`*rules` — Show server rules', inline: false },
-      { name: '🔗 Invite', value: '`*invite` — Get bot invite link', inline: false },
-      { name: '🎫 Tickets', value: '`*ticket` — Create a support ticket\n`*close` — Close a ticket (staff only)', inline: false },
-      { name: '⚖️ Moderation', value: '`*warn <user> [reason]` — Warn a user\n`*ban <user> [reason]` — Ban a user\n`*unban <id>` — Unban a user\n`*mute <user> <minutes>` — Timeout a user\n`*unmute <user>` — Remove timeout\n`*role <user> <role>` — Assign role to user', inline: false },
-      { name: '📊 Logs & History', value: '`*md <user> [page]` — Show modlogs (5/page)\n`*mds <user> [page]` — Show destaff logs (8/page)', inline: false },
-      { name: '🗑️ Cleanup & Management', value: '`-purg <count> [user]` — Purge messages\n`*del <channel>` — Delete a channel (confirmation required)', inline: false },
-      { name: '🚫 Blacklist', value: '`-blacklist <id> [reason]` — Add to blacklist\n`-unbll <id>` — Remove from blacklist\n`-bll` — View blacklist logs', inline: false },
+      { name: '📋 General', value: '`*help` — Help\n`*say <text>` — Repeat\n`*rules` — Rules\n`*membercount|*mc` — Member count\n`*invite` — Bot invite', inline: false },
+      { name: '🎫 Tickets', value: '`*ticket` — Create ticket\n`*close` — Close ticket (staff)', inline: false },
+      { name: '📅 Sessions', value: '`*sa <reg> <game> [mode]` — Session announce\n`*sb <reg> <game>` — Beta announce\n`*shelp` — Session help\n`*create <announcement>` — Import announcement\n`*session help|list|cancel|testpost`', inline: false },
+      { name: '🎧 Voice', value: '`*va [1d|7d|30d]` — Voice activity\n`/voiceactivity` — Slash version', inline: false },
+      { name: '⚖️ Moderation', value: '`*warn <user> [reason]`\n`*ban <user> [reason]`\n`*unban <id>`\n`*mute <user> <minutes>`\n`*unmute <user>`\n`*role <user> <role>`\n`*admin` — Overview', inline: false },
+      { name: '📊 Logs & History', value: '`*md <user> [page]` — Modlogs\n`*mds <user> [page]` — Destaff logs\n`*moderations <userId>`\n`*case <caseId>`', inline: false },
+      { name: '✏️ Modlog Editing', value: '`*reason <caseId> <text>`\n`*duration <caseId> <time>`\n`*dcase <caseId>` — Delete case\n`*allban <reason>` — Re-ban all', inline: false },
+      { name: '🗑️ Cleanup', value: '`-purg <count> [user]` — Purge\n`*del <channel>` — Delete channel', inline: false },
+      { name: '🚫 Blacklist', value: '`-blacklist <id> [reason]`\n`-unbll <id>`\n`-bll` — View logs\n`-dblacklist <id> [reason]` — Block *dice\n`-dunbll <id>` — Unblock *dice', inline: false },
       { name: '👥 Destaff', value: '`-destaff <user> [reason]` — Remove staff roles', inline: false },
-      { name: '✏️ Modlog Editing', value: '`*reason <caseId> <text>` — Update case reason\n`*duration <caseId> <time>` — Update case duration\n`*moderations <userId>` — Show all moderations for user\n`*case <caseId>` — Show details of a specific case', inline: false },
-      { name: '🎮 Fun Commands', value: '`*8ball` — Magic 8Ball\n`*flip` — Coin flip\n`*dice [1-100]` — Roll dice\n`*rate [@user]` — Rate someone\n`*joke` — Dev jokes\n`*compliment [@user]` — Give compliments', inline: false }
+      { name: '🎮 Fun', value: '`*8ball`\n`*flip`\n`*dice [1-100]`\n`*rate [@user]`\n`*joke`\n`*compliment [@user]`\n`*santa`', inline: false },
+      { name: '🎡 Game', value: '`*wheel|*glueckrad <1-5>`\n`*wheelhelp`\n`*spins`\n`*gluecksrad [opts]`', inline: false }
     );
 
     helpEmbed.setFooter({ text: 'Use PREFIX * for most commands, - for special commands, * for edits' });
@@ -5978,19 +7155,15 @@ client.on('messageCreate', async (message) => {
 
   // Dice roll command
   if (command === 'dice' || command === 'roll') {
+    if (isUserDiceBlacklisted(message.author && message.author.id)) {
+      return replyAsEmbed(message, 'Du bist für *dice gesperrt. Bitte warte auf `-dunbll` oder kontaktiere einen Moderator.');
+    }
     if (isUserBlacklisted(message.author && message.author.id)) {
       return replyAsEmbed(message, 'Du bist auf der Blacklist und kannst diesen Befehl nicht verwenden. Bitte kontaktiere einen Moderator oder warte auf `-unbll`.');
     }
     const dice = parseInt(args[0]) || 6;
     if (dice < 1 || dice > 100) return replyAsEmbed(message, 'Würfel-Bereich: 1-100');
-    // Special-case: force a high result for a specific user ID
-    let result;
-    if (message.author && message.author.id === '1191442500976640172') {
-      // Always return 76 for this user
-      result = 76;
-    } else {
-      result = Math.floor(Math.random() * dice) + 1;
-    }
+    const result = crypto.randomInt(1, dice + 1);
     const embed = new EmbedBuilder()
       .setTitle(`🎲 Würfel (1-${dice})`)
       .setDescription(`**Ergebnis: ${result}**`)
@@ -6443,7 +7616,7 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      const type = c.type || 'Case';
+      const type = displayCaseType(c.type || 'Case');
       const dur = c.durationMs ? ` (${humanDurationLong(c.durationMs)})` : '';
       let reason = String(c.reason || 'No reason provided');
       // If reason contains a trailing date like " - 28 January 2026 15:22", prefer that as the date and remove from reason
@@ -7443,7 +8616,11 @@ client.on('messageCreate', async (message) => {
   try {
     if (!message || !message.channel || !message.author) return;
     const channelId = String(message.channel.id || '');
-    if (channelId !== '1461370702895779945' && channelId !== '1461370812639481888') return;
+    if (PRE_REG_ANNOUNCE_SOURCE_CHANNEL_IDS.has(channelId)) return;
+    try {
+      const watch = loadWatchChannels(message.guildId);
+      if (!watch || !watch.has(channelId)) return;
+    } catch (e) { return; }
     const isSelf = Boolean(client.user && message.author.id === client.user.id);
     if (isSelf) return;
     let content = String(message.content || '').trim();
@@ -7459,6 +8636,7 @@ client.on('messageCreate', async (message) => {
       content = parts.join('\n').trim();
     }
     if (!content) return;
+    if (isClaimPanelLikeMessage(message, content)) return;
     if (!(/<t:\d+:t>/.test(content) || /\b\d+\s*[\.)-]\s*[0-2]?\d[:.][0-5]\d\s*(?:-|–|—|to)\s*[0-2]?\d[:.][0-5]\d\b/i.test(content))) return;
 
     const key = `force_summary:${message.id}`;
@@ -7769,7 +8947,7 @@ try {
       try {
         const raw = fs.readFileSync(simPath, 'utf8');
         const cfg = JSON.parse(raw || '{}');
-        const channelId = String(cfg.channel || '1461370812639481888');
+        const channelId = String(cfg.channel || '1469754683760316614');
         const content = String(cfg.content || '1. 17:00 - 17:15\nStaff: @Rakim');
         const fakeChannel = { id: channelId, send: async () => {}, isTextBased: () => true };
         const fakeAuthor = { id: String(cfg.authorId || '999999999999999999'), tag: cfg.authorTag || 'SimUser#0001' };
