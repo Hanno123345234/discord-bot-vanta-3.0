@@ -7,6 +7,14 @@ const resultBox = document.getElementById('result');
 const resultText = document.getElementById('resultText');
 const cancelBtn = document.getElementById('cancelBtn');
 const submitBtn = form.querySelector('button[type="submit"]');
+const API_BASE = String(window.SCRIMS_API_BASE || '').trim().replace(/\/+$/, '');
+
+function apiUrl(path) {
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
+
+const quickLogin = document.querySelector('a[href="/auth/discord"]');
+if (quickLogin) quickLogin.href = apiUrl('/auth/discord');
 
 function addMinutes(hhmm, minutes) {
   const [h, m] = String(hhmm || '00:00').split(':').map(Number);
@@ -55,8 +63,9 @@ form.addEventListener('submit', async (event) => {
   }
 
   try {
-    const response = await fetch('/api/create-lobby', {
+    const response = await fetch(apiUrl('/api/create-lobby'), {
       method: 'POST',
+      credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session: Number(session),

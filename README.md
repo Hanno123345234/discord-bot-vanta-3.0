@@ -123,6 +123,18 @@ npm start
 
 The Scrims UI is in `web/scrims` and is ready for Render Static hosting.
 
+### Recommended split hosting
+
+- **Bot + Scrims API/Auth**: run on **Cybrancee** (`npm start` for bot, `npm run scrims:web` for API/Auth when needed).
+- **Static frontend** (`web/scrims/*.html, *.css, *.js`): host on **Render Static Site**.
+- Configure `web/scrims/config.js`:
+	- `window.SCRIMS_API_BASE = 'https://YOUR-CYBRANCEE-DOMAIN'`
+- On Cybrancee set env vars for cross-origin frontend:
+	- `FRONTEND_ORIGIN=https://YOUR-RENDER-DOMAIN`
+	- `CORS_ORIGINS=https://YOUR-RENDER-DOMAIN`
+	- `CROSS_SITE_COOKIES=1`
+	- `DISCORD_REDIRECT_URI=https://YOUR-CYBRANCEE-DOMAIN/auth/discord/callback`
+
 1. Push this project to GitHub.
 2. In Render, click **New +** → **Blueprint**.
 3. Select your GitHub repository.
@@ -150,6 +162,7 @@ Then open: `http://localhost:4173`
 	- `DISCORD_CLIENT_ID`
 	- `DISCORD_CLIENT_SECRET`
 	- `DISCORD_REDIRECT_URI=http://localhost:4173/auth/discord/callback`
+	- Optional for split hosting: `FRONTEND_ORIGIN`, `CORS_ORIGINS`, `CROSS_SITE_COOKIES=1`
 - In the Discord Developer Portal, add the same callback URL under `OAuth2` -> `Redirects`.
 - Never commit `config.json` with real IDs to public repos
 

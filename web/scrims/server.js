@@ -10,6 +10,10 @@ const DROP_MAP_STATE_PATH = path.join(projectRoot, 'dropmap_web_marks.json');
 const DISCORD_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '').trim();
 const DISCORD_CLIENT_SECRET = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
 const DISCORD_REDIRECT_URI = String(process.env.DISCORD_REDIRECT_URI || `http://localhost:${port}/auth/discord/callback`).trim();
+const FRONTEND_ORIGIN = String(process.env.FRONTEND_ORIGIN || '').trim();
+const CORS_ORIGINS = String(process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+if (FRONTEND_ORIGIN && !CORS_ORIGINS.includes(FRONTEND_ORIGIN)) CORS_ORIGINS.push(FRONTEND_ORIGIN);
+const CROSS_SITE_COOKIES = String(process.env.CROSS_SITE_COOKIES || '').trim() === '1';
 const webSessions = new Map();
 const webOAuthStates = new Map();
 const SESSION_MAX_AGE_MS = 1000 * 60 * 60 * 24 * 7;
@@ -25,6 +29,20 @@ const mime = {
 function sendJson(res, status, body) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
   res.end(JSON.stringify(body));
+}
+
+function corsHeadersFor(req) {
+  const origin = String(req && req.headers && req.headers.origin || '').trim();
+  if (!origin) return null;
+  if (!CORS_ORIGINS.length) return null;
+  if (!CORS_ORIGINS.includes(origin) && !CORS_ORIGINS.includes('*')) return null;
+  return {
+    'Access-Control-Allow-Origin': origin,
+    'Access-Control-Allow-Credentials': 'true',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    Vary: 'Origin',
+  };
 }
 
 function sendRedirect(res, location, extraHeaders = {}) {
@@ -543,6 +561,15 @@ const server = http.createServer((req, res) => {
   const urlObj = new URL(String(req.url || '/'), 'http://localhost');
   const reqPath = urlObj.pathname;
   pruneExpiredEntries();
+  const corsHeaders = corsHeadersFor(req);
+  if (corsHeaders) {
+    for (const [k, v] of Object.entries(corsHeaders)) res.setHeader(k, v);
+  }
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204);
+    res.end();
+    return;
+  }
 
   if (req.method === 'GET' && reqPath === '/auth/discord') {
     if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
@@ -560,8 +587,8 @@ const server = http.createServer((req, res) => {
     });
     const cookie = serializeCookie('oauth_state', oauthState, {
       maxAge: Math.floor(OAUTH_STATE_MAX_AGE_MS / 1000),
-      sameSite: 'Lax',
-      secure: isSecureRequest(req),
+      sameSite: CROSS_SITE_COOKIES ? 'None' : 'Lax',
+      secure: CROSS_SITE_COOKIES ? true : isSecureRequest(req),
     });
     return sendRedirect(res, `https://discord.com/oauth2/authorize?${q.toString()}`, { 'Set-Cookie': cookie });
   }
@@ -574,8 +601,8 @@ const server = http.createServer((req, res) => {
     const stateMeta = state ? webOAuthStates.get(state) : null;
     const clearStateCookie = serializeCookie('oauth_state', '', {
       maxAge: 0,
-      sameSite: 'Lax',
-      secure: isSecureRequest(req),
+      sameSite: CROSS_SITE_COOKIES ? 'None' : 'Lax',
+      secure: CROSS_SITE_COOKIES ? true : isSecureRequest(req),
     });
     if (!code || !state || !cookieState || state !== cookieState || !stateMeta || Number(stateMeta.expiresAt || 0) <= nowMs()) {
       if (state) webOAuthStates.delete(state);
@@ -620,8 +647,8 @@ const server = http.createServer((req, res) => {
         const setCookies = [
           serializeCookie('sid', sid, {
             maxAge: Math.floor(SESSION_MAX_AGE_MS / 1000),
-            sameSite: 'Lax',
-            secure: isSecureRequest(req),
+            sameSite: CROSS_SITE_COOKIES ? 'None' : 'Lax',
+            secure: CROSS_SITE_COOKIES ? true : isSecureRequest(req),
           }),
           clearStateCookie,
         ];
@@ -640,8 +667,8 @@ const server = http.createServer((req, res) => {
     const sid = String(cookies.sid || '');
     if (sid) webSessions.delete(sid);
     const clearCookies = [
-      serializeCookie('sid', '', { maxAge: 0, sameSite: 'Lax', secure: isSecureRequest(req) }),
-      serializeCookie('oauth_state', '', { maxAge: 0, sameSite: 'Lax', secure: isSecureRequest(req) }),
+      serializeCookie('sid', '', { maxAge: 0, sameSite: CROSS_SITE_COOKIES ? 'None' : 'Lax', secure: CROSS_SITE_COOKIES ? true : isSecureRequest(req) }),
+      serializeCookie('oauth_state', '', { maxAge: 0, sameSite: CROSS_SITE_COOKIES ? 'None' : 'Lax', secure: CROSS_SITE_COOKIES ? true : isSecureRequest(req) }),
     ];
     return sendRedirect(res, '/dropmap.html', {
       'Set-Cookie': clearCookies,

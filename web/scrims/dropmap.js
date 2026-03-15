@@ -8,6 +8,17 @@ const marksList = document.getElementById('marksList');
 const authText = document.getElementById('authText');
 const loginBtn = document.getElementById('loginBtn');
 const logoutBtn = document.getElementById('logoutBtn');
+const API_BASE = String(window.SCRIMS_API_BASE || '').trim().replace(/\/+$/, '');
+
+function apiUrl(path) {
+  return API_BASE ? `${API_BASE}${path}` : path;
+}
+
+if (loginBtn) loginBtn.href = apiUrl('/auth/discord');
+if (logoutBtn) logoutBtn.href = apiUrl('/auth/logout');
+
+const loginNavLink = document.querySelector('a[href="/auth/discord"]');
+if (loginNavLink) loginNavLink.href = apiUrl('/auth/discord');
 
 let selectedPos = { x: 50, y: 50 };
 let previewDot = null;
@@ -76,7 +87,9 @@ function renderMarks() {
 
 async function loadMarks() {
   const lobby = lobbyValue();
-  const res = await fetch(`/api/dropmap/state?lobby=${encodeURIComponent(lobby)}`);
+  const res = await fetch(apiUrl(`/api/dropmap/state?lobby=${encodeURIComponent(lobby)}`), {
+    credentials: 'include',
+  });
   const payload = await res.json();
   if (!res.ok || !payload.ok) throw new Error(payload.error || 'Konnte Markierungen nicht laden.');
   marks = Array.isArray(payload.marks) ? payload.marks : [];
@@ -95,8 +108,9 @@ async function saveMark() {
     y: selectedPos.y,
   };
 
-  const res = await fetch('/api/dropmap/mark', {
+  const res = await fetch(apiUrl('/api/dropmap/mark'), {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -107,8 +121,9 @@ async function saveMark() {
 }
 
 async function deleteMark(id) {
-  const res = await fetch('/api/dropmap/delete', {
+  const res = await fetch(apiUrl('/api/dropmap/delete'), {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lobby: lobbyValue(), id }),
   });
@@ -122,7 +137,7 @@ async function deleteMark(id) {
 }
 
 async function loadMe() {
-  const res = await fetch('/api/me');
+  const res = await fetch(apiUrl('/api/me'), { credentials: 'include' });
   const payload = await res.json().catch(() => ({}));
   currentUser = payload && payload.user ? payload.user : null;
 
@@ -142,8 +157,9 @@ async function loadMe() {
 
 async function clearLobby() {
   if (!confirm(`Lobby ${lobbyValue()} wirklich leeren?`)) return;
-  const res = await fetch('/api/dropmap/clear', {
+  const res = await fetch(apiUrl('/api/dropmap/clear'), {
     method: 'POST',
+    credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ lobby: lobbyValue() }),
   });
