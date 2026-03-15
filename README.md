@@ -118,6 +118,39 @@ npm start
 
 - Keep your bot token secret
 - Use environment variables or `.env` file
+
+## 🌐 Deploy Scrims Website (GitHub + Render)
+
+The Scrims UI is in `web/scrims` and is ready for Render Static hosting.
+
+1. Push this project to GitHub.
+2. In Render, click **New +** → **Blueprint**.
+3. Select your GitHub repository.
+4. Render will read `render.yaml` automatically and create the static site.
+5. After deploy, open the generated Render URL.
+
+### Git commands (example)
+
+```bash
+git add .
+git commit -m "Add scrims dashboard and render deployment"
+git branch -M main
+git remote add origin <YOUR_GITHUB_REPO_URL>
+git push -u origin main
+```
+
+### Local preview for Scrims page
+
+```bash
+npm run scrims:web
+```
+
+Then open: `http://localhost:4173`
+- For Discord website login, also set these environment variables before starting:
+	- `DISCORD_CLIENT_ID`
+	- `DISCORD_CLIENT_SECRET`
+	- `DISCORD_REDIRECT_URI=http://localhost:4173/auth/discord/callback`
+- In the Discord Developer Portal, add the same callback URL under `OAuth2` -> `Redirects`.
 - Never commit `config.json` with real IDs to public repos
 
 ## 📝 License

@@ -31,6 +31,8 @@ module.exports = {
       try { sessionCmd = require(path.join(DATA_DIR, 'commands', 'session.js')); } catch (e) { /* ignore if missing */ }
       let createCmd = null;
       try { createCmd = require(path.join(DATA_DIR, 'commands', 'create.js')); } catch (e) { /* ignore */ }
+      let setupCmd = null;
+      try { setupCmd = require(path.join(DATA_DIR, 'commands', 'setup.js')); } catch (e) { /* ignore */ }
       let pollCmd = null;
       try { pollCmd = require(path.join(DATA_DIR, 'commands', 'poll.js')); } catch (e) { /* ignore */ }
       let claimCmd = null;
@@ -41,6 +43,7 @@ module.exports = {
         .concat(voiceActivityCmd && voiceActivityCmd.data ? [voiceActivityCmd.data] : [])
         .concat(sessionCmd && sessionCmd.data ? [sessionCmd.data] : [])
         .concat(createCmd && createCmd.data ? [createCmd.data] : [])
+        .concat(setupCmd && setupCmd.data ? [setupCmd.data] : [])
         .concat(pollCmd && pollCmd.data ? [pollCmd.data] : [])
         .concat(claimCmd && claimCmd.data ? [claimCmd.data] : [])
         .concat(whoisCmd && whoisCmd.data ? [whoisCmd.data] : []);

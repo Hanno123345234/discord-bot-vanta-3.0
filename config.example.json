@@ -13,6 +13,11 @@
   "staffRoleId": "REPLACE_WITH_STAFF_ROLE_ID",
   "memberRoleId": "REPLACE_WITH_MEMBER_ROLE_ID",
   "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID",
+  "scrimsGuildId": "REPLACE_WITH_GUILD_ID",
+  "dropmapImageUrl": "https://example.com/your-dropmap.png",
+  "gameStartedImageUrl": "https://example.com/your-game-started-banner.png",
+  "nfImageUrl": "https://example.com/your-game-started-banner.png",
+  "nextSessionChannelId": "REPLACE_WITH_CHANNEL_ID_OPTIONAL",
   "guilds": {
     "REPLACE_WITH_GUILD_ID": {
       "joinLogChannelId": "REPLACE_WITH_JOIN_LOG_CHANNEL_ID",
@@ -20,6 +25,10 @@
       "moderationLogChannelId": "REPLACE_WITH_MODERATION_LOG_CHANNEL_ID",
       "memberRoleId": "REPLACE_WITH_MEMBER_ROLE_ID",
       "adminRoleId": "REPLACE_WITH_ADMIN_ROLE_ID",
+      "dropmapImageUrl": "https://example.com/your-dropmap.png",
+      "gameStartedImageUrl": "https://example.com/your-game-started-banner.png",
+      "nfImageUrl": "https://example.com/your-game-started-banner.png",
+      "nextSessionChannelId": "REPLACE_WITH_CHANNEL_ID_OPTIONAL",
 
       "voiceCreateEnabled": true,
       "voiceCreateTriggerChannelId": "REPLACE_WITH_TRIGGER_VOICE_CHANNEL_ID",

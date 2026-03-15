@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Fortnite Dropmap Marker</title>
+  <link rel="stylesheet" href="dropmap.css" />
+</head>
+<body>
+  <main class="layout">
+    <header class="topbar">
+      <div>
+        <h1>Fortnite Dropmap Marker</h1>
+        <p class="topbar-sub">Setze Spots, teile sie live im Team und halte Lobbys synchron.</p>
+      </div>
+      <nav class="top-actions" aria-label="Schnellnavigation">
+        <a class="link-chip" href="/">Lobby Creator</a>
+        <a class="link-chip" href="/auth/discord">Discord Login</a>
+        <a class="link-chip link-chip-accent" href="https://discord.gg/SGg8dMpq55" target="_blank" rel="noopener noreferrer">Discord Server</a>
+      </nav>
+    </header>
+
+    <section class="controls">
+      <label>
+        <span>Lobby</span>
+        <input id="lobbyInput" type="number" min="1" value="1" />
+      </label>
+      <label>
+        <span>Spot Name</span>
+        <input id="spotInput" type="text" maxlength="80" placeholder="z. B. Hill North" />
+      </label>
+      <div id="authPanel" class="auth-panel">
+        <span id="authText">Nicht verbunden</span>
+        <div class="auth-actions">
+          <a id="loginBtn" class="btn btn-primary" href="/auth/discord">Discord verbinden</a>
+          <a id="logoutBtn" class="btn btn-ghost" href="/auth/logout" hidden>Logout</a>
+        </div>
+      </div>
+      <button id="saveBtn" class="btn btn-primary" type="button">Markierung speichern</button>
+      <button id="clearBtn" class="btn btn-danger" type="button">Lobby leeren</button>
+    </section>
+
+    <section class="map-wrap">
+      <div class="hint">Klick auf die Karte, um den Spot zu setzen.</div>
+      <div id="mapBox" class="map-box" role="img" aria-label="Fortnite Map">
+        <img id="mapImage" src="https://fortnite-api.com/images/map.png?showPOI=true" alt="Fortnite Map" />
+        <div id="markersLayer" class="markers-layer"></div>
+      </div>
+    </section>
+
+    <section class="list-wrap">
+      <h2>Gesetzte Markierungen</h2>
+      <ul id="marksList" class="marks-list"></ul>
+    </section>
+  </main>
+
+  <script src="dropmap.js"></script>
+</body>
+</html>

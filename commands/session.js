@@ -41,7 +41,7 @@ function removePersistedReminder(id) {
 
 module.exports = {
   name: 'session',
-  description: 'Session system: create/list/cancel/remindnow/watch/simulate',
+  description: 'Session system: create/list/cancel/remindnow/watch/simulate/panel/logs/migrate',
   data: {
     name: 'session',
     description: 'Session system commands',
@@ -66,6 +66,12 @@ module.exports = {
       ] }
       ,{ name: 'panel', type: ApplicationCommandOptionType.Subcommand, description: 'Post an admin panel to manage sessions', options: [
         { name: 'channel', type: ApplicationCommandOptionType.Channel, description: 'Channel to post panel into', required: false }
+      ] },
+      { name: 'logs', type: ApplicationCommandOptionType.Subcommand, description: 'Show recent session logs', options: [
+        { name: 'count', type: ApplicationCommandOptionType.Integer, description: 'How many entries (1-20)', required: false, min_value: 1, max_value: 20 }
+      ] },
+      { name: 'migrate', type: ApplicationCommandOptionType.Subcommand, description: 'Migrate reminders between sqlite and json', options: [
+        { name: 'target', type: ApplicationCommandOptionType.String, description: 'Target storage', required: true, choices: [{ name: 'sqlite', value: 'sqlite' }, { name: 'json', value: 'json' }] }
       ] }
     ]
   },

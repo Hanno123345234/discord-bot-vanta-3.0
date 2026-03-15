@@ -1,0 +1,92 @@
+{
+  "nextId": 6,
+  "pending": {},
+  "submissions": {
+    "1": {
+      "id": 1,
+      "userId": "1419323844971335763",
+      "guildId": "1450916177122431098",
+      "actionType": "Ban",
+      "caseId": 10259,
+      "answers": [
+        ".ö",
+        "l",
+        "l",
+        "l"
+      ],
+      "createdAt": 1772563778832,
+      "status": "approved",
+      "reviewedBy": "1191442500976640172",
+      "reviewedAt": 1772563824440
+    },
+    "2": {
+      "id": 2,
+      "userId": "1419323844971335763",
+      "guildId": "1450916177122431098",
+      "actionType": "Mute",
+      "caseId": 10268,
+      "answers": [
+        "idk",
+        "idki",
+        "idk",
+        "idk"
+      ],
+      "createdAt": 1772564566113,
+      "status": "rejected",
+      "reviewedBy": "1349428161212977172",
+      "reviewedAt": 1772564596590
+    },
+    "3": {
+      "id": 3,
+      "userId": "1419323844971335763",
+      "guildId": "1450916177122431098",
+      "actionType": "Mute",
+      "caseId": 10270,
+      "answers": [
+        "gdrstgerasteatgeat",
+        "rtaegteageageageageageageageagag",
+        "ragegeageagageagae",
+        "graegeagteahgeaheahaH<HAe"
+      ],
+      "createdAt": 1772564892346,
+      "status": "approved",
+      "reviewedBy": "1191442500976640172",
+      "reviewedAt": 1772564908126
+    },
+    "4": {
+      "id": 4,
+      "userId": "999503932860661902",
+      "guildId": "1450916177122431098",
+      "actionType": "Mute",
+      "caseId": 10275,
+      "answers": [
+        "it was perm abuse take his roles",
+        "didnt do anything wrong",
+        "nah",
+        "a"
+      ],
+      "createdAt": 1772565268172,
+      "status": "approved",
+      "reviewedBy": "1191442500976640172",
+      "reviewedAt": 1772565290084
+    },
+    "5": {
+      "id": 5,
+      "userId": "1419323844971335763",
+      "guildId": "1450916177122431098",
+      "actionType": "Mute",
+      "caseId": 10274,
+      "answers": [
+        "7567gfg",
+        "g",
+        "asdgsadggaDGSagg",
+        "gDggsGSGGSDa<g"
+      ],
+      "createdAt": 1772565398607,
+      "status": "approved",
+      "reviewedBy": "1191442500976640172",
+      "reviewedAt": 1772565409968
+    }
+  },
+  "invites": {}
+}

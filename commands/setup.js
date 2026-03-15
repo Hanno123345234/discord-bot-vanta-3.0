@@ -1,11 +1,11 @@
 const { ApplicationCommandOptionType } = require('discord.js');
 
 module.exports = {
-  name: 'create',
-  description: 'Creates fixed lobby channels for Duo Session 5 Lobby 1',
+  name: 'setup',
+  description: 'Send all standard lobby setup messages into existing lobby channels',
   data: {
-    name: 'create',
-    description: 'Create fixed lobby channels',
+    name: 'setup',
+    description: 'Send setup messages to lobby channels',
     options: [
       {
         name: 'session',
@@ -26,17 +26,11 @@ module.exports = {
         required: true,
       },
       {
-        name: 'lobby_template',
-        description: 'Lobby template label (for organization)',
-        type: ApplicationCommandOptionType.String,
-        required: true,
-      },
-      {
         name: 'category',
-        description: 'Category name or category ID/mention',
+        description: 'Category name or category ID/mention (optional)',
         type: ApplicationCommandOptionType.String,
         required: false,
       },
-    ]
-  }
+    ],
+  },
 };

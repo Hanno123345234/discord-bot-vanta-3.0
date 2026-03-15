@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: novaprac-scrims
+    runtime: static
+    buildCommand: ""
+    staticPublishPath: web/scrims
+    pullRequestPreviewsEnabled: true

@@ -448,20 +448,6 @@ module.exports = {
 
     // Slash command handler
     if (interaction.isChatInputCommand()) {
-      // support /create here as a fallback to ensure the modal is shown
-      if (interaction.commandName === 'create') {
-        try {
-          const modal = new ModalBuilder().setCustomId('create_modal').setTitle('Paste session announcement');
-          const input = new TextInputBuilder().setCustomId('announcement_text').setLabel('Announcement').setStyle(TextInputStyle.Paragraph).setRequired(true).setPlaceholder('Paste the full announcement here...').setMinLength(10).setMaxLength(4000);
-          const row = new ActionRowBuilder().addComponents(input);
-          modal.addComponents(row);
-          await interaction.showModal(modal);
-        } catch (e) {
-          console.error('ticket interaction create modal failed', e);
-          try { await interaction.reply({ content: 'Failed to open the modal.', ephemeral: true }); } catch (e) {}
-        }
-        return;
-      }
       // session is handled centrally in index.js now
       if (interaction.commandName === 'admin') {
         const cmd = require(path.join(__dirname, '..', 'commands', 'admin.js'));

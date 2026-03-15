@@ -1,6 +1,41 @@
 const fs = require('fs');
 const path = require('path');
-const CLAIMING_CONFIG = require('./claiming.config');
+
+const BUILTIN_CLAIMING_CONFIG = {
+  channels: {
+    announceNormal: '',
+    announceReload: '',
+    claimStaff: '',
+    claimHead: '',
+  },
+  roles: {
+    staff: '',
+    head: '',
+    headStaff: '',
+  },
+  timing: {
+    preRegLeadMs: 60 * 60 * 1000,
+    catchupMs: 90 * 60 * 1000,
+    headImmediateLeadMs: 1200,
+  },
+  limits: {
+    staffMaxClaims: 1,
+    headMaxClaims: 2,
+  },
+};
+
+let CLAIMING_CONFIG = BUILTIN_CLAIMING_CONFIG;
+try {
+  const external = require('./claiming.config');
+  CLAIMING_CONFIG = {
+    ...BUILTIN_CLAIMING_CONFIG,
+    ...external,
+    channels: { ...BUILTIN_CLAIMING_CONFIG.channels, ...(external && external.channels ? external.channels : {}) },
+    roles: { ...BUILTIN_CLAIMING_CONFIG.roles, ...(external && external.roles ? external.roles : {}) },
+    timing: { ...BUILTIN_CLAIMING_CONFIG.timing, ...(external && external.timing ? external.timing : {}) },
+    limits: { ...BUILTIN_CLAIMING_CONFIG.limits, ...(external && external.limits ? external.limits : {}) },
+  };
+} catch (_) {}
 const {
   EmbedBuilder,
   ActionRowBuilder,
@@ -437,7 +472,7 @@ class ClaimingSystem {
         this.claimPanels.set(String(sent.id), state);
         this.upsertPanelState(state);
         await sent.edit({ embeds: [this.buildClaimEmbed(state)], components: [this.buildClaimRow(String(sent.id))] }).catch(() => {});
-        await this.sendTemporaryStaffPing(channel);
+        await this.sendTemporaryRolePing(channel, this.staffRoleId);
       } finally {
         this.claimTimers.delete(key);
         this.removeClaimSchedule(key);

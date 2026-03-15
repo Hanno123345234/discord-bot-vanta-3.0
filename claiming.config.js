@@ -6,15 +6,15 @@ module.exports = {
     claimHead: '1404104122927677490',
   },
   roles: {
-    staff: '1267285458979917917',
-    head: '1267285458979917918',
+    staff: '',
+    headstaff: '',
   },
   timing: {
     preRegLeadMs: 60 * 60 * 1000,
     catchupMs: 90 * 60 * 1000,
   },
   limits: {
-    staffMaxClaims: 1,
+    staffMaxClaims: 10,
     headMaxClaims: 2,
   },
   behavior: {
