@@ -8,11 +8,9 @@
 </head>
 <body>
   <main class="page">
-    <section class="overlay"></section>
-    <section class="dialog" role="dialog" aria-labelledby="createLobbyTitle">
-      <header class="dialog-header">
-        <h1 id="createLobbyTitle">Create Lobby</h1>
-        <p class="dialog-subtitle">Manage your scrims workflow from one place.</p>
+    <section class="hero">
+      <header class="hero-topbar">
+        <p class="brand">CYBRANCEE Scrims</p>
         <nav class="quick-actions" aria-label="Quick actions">
           <a class="quick-link quick-link-primary" href="/dropmap.html">Fortnite Dropmap</a>
           <a class="quick-link" href="/auth/discord">Discord Login</a>
@@ -20,55 +18,98 @@
         </nav>
       </header>
 
-      <form id="createLobbyForm" class="dialog-form">
-        <div class="row two-cols">
-          <label>
-            <span>Session</span>
-            <input id="session" name="session" type="number" min="1" value="1" required />
-          </label>
-          <label>
-            <span>Lobby</span>
-            <input id="lobby" name="lobby" type="number" min="1" value="1" required />
-          </label>
-        </div>
-
-        <label>
-          <span>Registration Opens</span>
-          <input id="registrationOpens" name="registrationOpens" type="time" value="00:48" required />
-        </label>
-
-        <label>
-          <span>Lobby Template</span>
-          <select id="lobbyTemplate" name="lobbyTemplate" required>
-            <option value="" disabled>Select a lobby template...</option>
-            <option value="duo-default" selected>Duo Default</option>
-            <option value="duo-ranked">Duo Ranked</option>
-            <option value="duo-custom">Duo Custom</option>
-            <option value="trio-default">Trio Default</option>
-            <option value="trio-ranked">Trio Ranked</option>
-            <option value="trio-custom">Trio Custom</option>
-          </select>
-        </label>
-
-        <section class="priority" aria-live="polite">
-          <h2>Priority Times (fixed)</h2>
-          <ul>
-            <li><strong>Supporter:</strong> <span id="supporterTime">--:--</span> <em>(+1 min)</em></li>
-            <li><strong>Server Booster + CC Priority:</strong> <span id="boosterTime">--:--</span> <em>(+2 min)</em></li>
-            <li><strong>Verified:</strong> <span id="verifiedTime">--:--</span> <em>(+3 min)</em></li>
-          </ul>
+      <div class="hero-main">
+        <section class="hero-copy">
+          <p class="hero-kicker">Compete at the highest level</p>
+          <h1 id="createLobbyTitle">Create scrim lobbies in seconds</h1>
+          <p class="dialog-subtitle">Everything you need for competitive sessions: smart role setup, dropmaps, structured channels and professional timings.</p>
+          <div class="stats-row" aria-label="Platform stats">
+            <article>
+              <strong>24/7</strong>
+              <span>Session Support</span>
+            </article>
+            <article>
+              <strong>Fast</strong>
+              <span>Lobby Provisioning</span>
+            </article>
+            <article>
+              <strong>Pro</strong>
+              <span>Dropmap Workflow</span>
+            </article>
+          </div>
         </section>
 
-        <footer class="dialog-actions">
-          <button type="button" class="btn btn-ghost" id="cancelBtn">Cancel</button>
-          <button type="submit" class="btn btn-primary">Create Lobby</button>
-        </footer>
-      </form>
+        <section class="dialog" role="dialog" aria-labelledby="createLobbyTitle">
+          <form id="createLobbyForm" class="dialog-form">
+            <div class="row two-cols">
+              <label>
+                <span>Session</span>
+                <input id="session" name="session" type="number" min="1" value="1" required />
+              </label>
+              <label>
+                <span>Lobby</span>
+                <input id="lobby" name="lobby" type="number" min="1" value="1" required />
+              </label>
+            </div>
 
-      <section id="result" class="result" hidden>
-        <h3>Lobby Created</h3>
-        <p id="resultText"></p>
-      </section>
+            <label>
+              <span>Registration Opens</span>
+              <input id="registrationOpens" name="registrationOpens" type="time" value="00:48" required />
+            </label>
+
+            <label>
+              <span>Lobby Template</span>
+              <select id="lobbyTemplate" name="lobbyTemplate" required>
+                <option value="" disabled>Select a lobby template...</option>
+                <option value="duo-default" selected>Duo Default</option>
+                <option value="duo-ranked">Duo Ranked</option>
+                <option value="duo-custom">Duo Custom</option>
+                <option value="trio-default">Trio Default</option>
+                <option value="trio-ranked">Trio Ranked</option>
+                <option value="trio-custom">Trio Custom</option>
+              </select>
+            </label>
+
+            <section class="priority" aria-live="polite">
+              <h2>Priority Times (fixed)</h2>
+              <ul>
+                <li><strong>Supporter:</strong> <span id="supporterTime">--:--</span> <em>(+1 min)</em></li>
+                <li><strong>Server Booster + CC Priority:</strong> <span id="boosterTime">--:--</span> <em>(+2 min)</em></li>
+                <li><strong>Verified:</strong> <span id="verifiedTime">--:--</span> <em>(+3 min)</em></li>
+              </ul>
+            </section>
+
+            <footer class="dialog-actions">
+              <button type="button" class="btn btn-ghost" id="cancelBtn">Cancel</button>
+              <button type="submit" class="btn btn-primary">Create Lobby</button>
+            </footer>
+          </form>
+
+          <section id="result" class="result" hidden>
+            <h3>Lobby Created</h3>
+            <p id="resultText"></p>
+          </section>
+        </section>
+      </div>
+    </section>
+
+    <section class="feature-grid" aria-label="Core features">
+      <article class="feature-card">
+        <h2>Daily Sessions</h2>
+        <p>Launch structured sessions every day and keep registration flow clean for all skill levels.</p>
+      </article>
+      <article class="feature-card">
+        <h2>Exclusive Dropmaps</h2>
+        <p>Use coordinated dropmap planning to lock early-game consistency and cleaner rotations.</p>
+      </article>
+      <article class="feature-card">
+        <h2>Smart Role System</h2>
+        <p>Automatic lobby and staff roles plus clear permission setup across all required channels.</p>
+      </article>
+      <article class="feature-card">
+        <h2>Community Ready</h2>
+        <p>Direct Discord connection, fast moderation workflow and scalable session operations.</p>
+      </article>
     </section>
   </main>
 

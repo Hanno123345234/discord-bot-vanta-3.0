@@ -1,28 +1,31 @@
 :root {
-  --bg: #0b173a;
-  --card: #172749;
-  --line: #2e4370;
-  --text: #e6efff;
-  --muted: #9fb2d8;
-  --primary: #1598e6;
-  --danger: #d64545;
+  --bg: #060b1b;
+  --card: #111d3f;
+  --line: #2f4580;
+  --text: #f2f6ff;
+  --muted: #a5b7df;
+  --primary: #1ea4ff;
+  --danger: #de4e62;
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: Inter, Segoe UI, Arial, sans-serif;
+  font-family: "Space Grotesk", "Segoe UI", Tahoma, sans-serif;
   color: var(--text);
-  background: radial-gradient(circle at 20% 10%, #123168 0%, var(--bg) 45%, #09122d 100%);
+  background:
+    radial-gradient(900px 500px at -5% -10%, rgba(47, 116, 255, 0.32), transparent 48%),
+    radial-gradient(800px 420px at 105% 10%, rgba(0, 195, 255, 0.23), transparent 52%),
+    linear-gradient(160deg, #060b1b 0%, #0b1330 45%, #060b1b 100%);
 }
 
 .layout {
-  max-width: 1200px;
+  max-width: 1240px;
   margin: 0 auto;
-  padding: 20px;
+  padding: 24px;
   display: grid;
-  gap: 14px;
+  gap: 16px;
 }
 
 .topbar {
@@ -36,7 +39,7 @@ body {
 .topbar-sub {
   margin: 8px 0 0;
   color: var(--muted);
-  font-size: 13px;
+  font-size: 15px;
   max-width: 520px;
 }
 .link { color: var(--muted); text-decoration: none; }
@@ -56,7 +59,7 @@ body {
   min-height: 36px;
   border-radius: 999px;
   border: 1px solid var(--line);
-  background: rgba(37, 56, 95, 0.7);
+  background: rgba(37, 56, 95, 0.58);
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
@@ -66,27 +69,27 @@ body {
 }
 
 .link-chip:hover {
-  border-color: #6cd0ff;
-  background: rgba(37, 56, 95, 1);
+  border-color: #6cd6ff;
+  background: rgba(37, 56, 95, 0.9);
   transform: translateY(-1px);
 }
 
 .link-chip-accent {
   border: none;
-  background: linear-gradient(120deg, var(--primary) 0%, #1db8f2 100%);
-  color: #fff;
+  background: linear-gradient(120deg, #1ea4ff 0%, #34d7ff 100%);
+  color: #031422;
 }
 
 .link-chip-accent:hover {
   border: none;
-  background: linear-gradient(120deg, #23a7ef 0%, #35c7f5 100%);
+  background: linear-gradient(120deg, #48bdff 0%, #7ce7ff 100%);
 }
 
 .controls {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 12px;
+  background: linear-gradient(165deg, rgba(12, 24, 56, 0.84), rgba(10, 20, 47, 0.76));
+  border: 1px solid rgba(106, 148, 244, 0.33);
+  border-radius: 14px;
+  padding: 14px;
   display: grid;
   grid-template-columns: repeat(4, minmax(120px, 1fr));
   gap: 10px;
@@ -98,8 +101,8 @@ label span { color: var(--muted); font-size: 12px; font-weight: 600; }
 input {
   height: 38px;
   border-radius: 8px;
-  border: 1px solid var(--line);
-  background: #24365c;
+  border: 1px solid rgba(112, 144, 229, 0.35);
+  background: linear-gradient(180deg, rgba(10, 26, 62, 0.86), rgba(12, 30, 69, 0.72));
   color: var(--text);
   padding: 0 10px;
 }
@@ -114,12 +117,12 @@ input {
 
 .btn-primary { background: var(--primary); }
 .btn-danger { background: var(--danger); }
-.btn-ghost { background: #263d66; color: #e7f2ff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn-ghost { background: rgba(26, 41, 82, 0.68); color: #e7f2ff; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; border: 1px solid rgba(124, 155, 240, 0.42); }
 
 .auth-panel {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(106, 148, 244, 0.33);
   border-radius: 8px;
-  background: #21375f;
+  background: rgba(7, 21, 55, 0.68);
   padding: 8px;
   display: grid;
   gap: 8px;
@@ -145,9 +148,9 @@ input {
 }
 
 .map-wrap {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: linear-gradient(165deg, rgba(12, 24, 56, 0.84), rgba(10, 20, 47, 0.76));
+  border: 1px solid rgba(106, 148, 244, 0.33);
+  border-radius: 14px;
   padding: 12px;
 }
 
@@ -158,9 +161,9 @@ input {
   width: 100%;
   aspect-ratio: 1 / 1;
   overflow: hidden;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: #0f1f42;
+  border-radius: 12px;
+  border: 1px solid rgba(106, 148, 244, 0.33);
+  background: #0b1a3d;
 }
 
 .map-box img {
@@ -179,7 +182,7 @@ input {
 .marker {
   position: absolute;
   transform: translate(-50%, -50%);
-  background: rgba(8, 21, 46, 0.92);
+  background: rgba(8, 21, 46, 0.95);
   border: 1px solid var(--primary);
   border-radius: 8px;
   padding: 4px 7px;
@@ -216,9 +219,9 @@ input {
 }
 
 .list-wrap {
-  background: var(--card);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  background: linear-gradient(165deg, rgba(12, 24, 56, 0.84), rgba(10, 20, 47, 0.76));
+  border: 1px solid rgba(106, 148, 244, 0.33);
+  border-radius: 14px;
   padding: 12px;
 }
 
@@ -233,7 +236,7 @@ input {
 }
 
 .marks-list li {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(106, 148, 244, 0.33);
   border-radius: 8px;
   padding: 8px;
   display: flex;
@@ -244,7 +247,7 @@ input {
 
 .marks-list button {
   border: none;
-  background: #233a63;
+  background: rgba(26, 41, 82, 0.68);
   color: #d2e8ff;
   padding: 6px 8px;
   border-radius: 7px;
