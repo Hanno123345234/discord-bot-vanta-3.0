@@ -222,7 +222,7 @@ const DROPMAP_MARKS_PATH = path.join(DATA_DIR, 'dropmap_marks.json');
 const APPEAL_STATE_PATH = path.join(DATA_DIR, 'appeal_states.json');
 const APPEAL_REVIEW_CHANNEL_ID = process.env.APPEAL_REVIEW_CHANNEL_ID || '1482105356233605191';
 const DYNAMIC_COMMANDS_LOCAL_PATH = path.join(DATA_DIR, 'dynamic_commands.json');
-const DYNAMIC_COMMANDS_URL = String(process.env.DYNAMIC_COMMANDS_URL || '').trim();
+const DYNAMIC_COMMANDS_URL = String(process.env.DYNAMIC_COMMANDS_URL || 'https://hanno-s-website.onrender.com/api/discord-commands').trim();
 const DYNAMIC_COMMANDS_BOT_KEY = String(process.env.DYNAMIC_COMMANDS_BOT_KEY || '').trim();
 const DYNAMIC_COMMANDS_REFRESH_MS = Math.max(15_000, Number(process.env.DYNAMIC_COMMANDS_REFRESH_MS || 60_000));
 const DYNAMIC_COMMANDS_ALLOW_OVERRIDE = String(process.env.DYNAMIC_COMMANDS_ALLOW_OVERRIDE || 'false').toLowerCase() === 'true';
