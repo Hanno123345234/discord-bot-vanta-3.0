@@ -9452,6 +9452,29 @@ client.on('messageCreate', async (message) => {
 
   if (!command) return replyAsEmbed(message, 'Usage: *help');
 
+  if (command === 'cmdsync' || command === 'cmdstatus') {
+    if (!hasStaffCommandAccess(message)) return;
+    const fields = [
+      `Source: ${dynamicCommandsState.source || 'n/a'}`,
+      `Count: ${dynamicCommandsState.byTrigger ? dynamicCommandsState.byTrigger.size : 0}`,
+      `Last Sync: ${dynamicCommandsState.lastSyncAt ? new Date(dynamicCommandsState.lastSyncAt).toISOString() : 'never'}`,
+      `URL Set: ${DYNAMIC_COMMANDS_URL ? 'yes' : 'no'}`,
+      `Key Set: ${DYNAMIC_COMMANDS_BOT_KEY ? 'yes' : 'no'}`,
+      `Last Error: ${dynamicCommandsState.lastError || 'none'}`,
+    ];
+    return replyAsEmbed(message, fields.join('\n'));
+  }
+
+  if (command === 'cmdrefresh') {
+    if (!hasStaffCommandAccess(message)) return;
+    try {
+      await refreshDynamicCommands(true);
+      return replyAsEmbed(message, `Refreshed. Source=${dynamicCommandsState.source || 'n/a'} Count=${dynamicCommandsState.byTrigger ? dynamicCommandsState.byTrigger.size : 0} Error=${dynamicCommandsState.lastError || 'none'}`);
+    } catch (e) {
+      return replyAsEmbed(message, `Refresh failed: ${String(e && e.message ? e.message : e)}`);
+    }
+  }
+
   const usageByCommand = {
     say: '*say <message>',
     md: '*md <user|id> [page]',
