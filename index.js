@@ -13514,7 +13514,7 @@ client.on('messageCreate', async (message) => {
       .setTitle('CC Priority')
       .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})`)
       .setColor(0x87CEFA);
-    if (firstImageUrl) emb.setThumbnail(firstImageUrl);
+    if (firstImageUrl) emb.setImage(firstImageUrl);
 
     await reviewCh.send({
       embeds: [emb],
@@ -13586,7 +13586,7 @@ client.on('interactionCreate', async (interaction) => {
 
     const oldContent = String(interaction.message.content || '');
     const statusLine = action === 'accept'
-      ? `\n\nStatus: Accepted by <@${interaction.user.id}> (role assigned)`
+      ? `\n\nStatus: Accepted by <@${interaction.user.id}>`
       : `\n\nStatus: Declined by <@${interaction.user.id}>`;
 
     await interaction.update({
