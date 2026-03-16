@@ -345,7 +345,7 @@ function normalizeDynamicCommandEntry(entry) {
   const response = String(entry && (entry.response || entry.content) ? (entry.response || entry.content) : '').trim();
   if (!response || response.length > 1800) return null;
   const modeRaw = String(entry && entry.mode ? entry.mode : 'text').trim().toLowerCase();
-  const mode = (modeRaw === 'embed') ? 'embed' : 'text';
+  const mode = ['text', 'embed', 'dm', 'ban', 'mute', 'kick', 'role'].includes(modeRaw) ? modeRaw : 'text';
   const embedTitle = String(entry && entry.embedTitle ? entry.embedTitle : '').trim().slice(0, 120);
   const colorRaw = String(entry && entry.embedColor ? entry.embedColor : '#87CEFA').trim();
   const embedColor = /^#?[0-9a-fA-F]{6}$/.test(colorRaw) ? `#${colorRaw.replace(/^#/, '').toUpperCase()}` : '#87CEFA';
@@ -433,6 +433,17 @@ function renderDynamicCommandTemplate(input, ctx) {
   return src.replace(/\{(user|username|server|channel|args|prefix|command|arg1|arg2|arg3|arg4|arg5)\}/gi, (m, k) => map[String(k || '').toLowerCase()] || '');
 }
 
+function resolveDynamicRole(guild, rawSpec) {
+  const spec = String(rawSpec || '').trim();
+  if (!guild || !spec) return null;
+  const roleId = parseId(spec.replace(/[<@&>]/g, '')) || parseId(spec);
+  if (roleId) return guild.roles.cache.get(roleId) || null;
+  const normalized = spec.toLowerCase();
+  return guild.roles.cache.find(r => String(r.name || '').toLowerCase() === normalized)
+    || guild.roles.cache.find(r => String(r.name || '').toLowerCase().includes(normalized))
+    || null;
+}
+
 async function tryExecuteDynamicPrefixCommand(message, command, args) {
   try {
     if (!message || !message.channel || !command) return false;
@@ -463,7 +474,140 @@ async function tryExecuteDynamicPrefixCommand(message, command, args) {
     }).slice(0, 1900);
 
     if (!rendered) return false;
-    if (entry.mode === 'embed') {
+    const mode = String(entry.mode || 'text').toLowerCase();
+
+    if (mode === 'dm') {
+      const targetId = parseId((args && args[0]) || '');
+      const targetUser = targetId
+        ? await client.users.fetch(targetId).catch(() => null)
+        : message.author;
+      if (!targetUser) {
+        await message.channel.send({ content: 'Ungueltiger User fuer DM. Nutze z. B. *command @user' }).catch(() => null);
+        return true;
+      }
+      const ok = await targetUser.send({ content: rendered, allowedMentions: { parse: ['users', 'roles'] } }).then(() => true).catch(() => false);
+      if (!ok) {
+        await message.channel.send({ content: 'DM konnte nicht gesendet werden (Privatsphaere blockiert).' }).catch(() => null);
+      }
+      return true;
+    }
+
+    if (['ban', 'mute', 'kick', 'role'].includes(mode)) {
+      if (!message.guild || !message.member) {
+        await message.channel.send({ content: 'Diese Aktion funktioniert nur in einem Server-Channel.' }).catch(() => null);
+        return true;
+      }
+
+      const targetId = parseId((args && args[0]) || '');
+      if (!targetId) {
+        await message.channel.send({ content: `Bitte Ziel angeben. Beispiel: *${command} @user` }).catch(() => null);
+        return true;
+      }
+
+      const botMember = message.guild.members.me || await message.guild.members.fetch(client.user.id).catch(() => null);
+      const reason = String(rendered || `${command} via dynamic command`).slice(0, 400);
+
+      if (mode === 'ban') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+          await message.channel.send({ content: 'Dir fehlt die Permission: Ban Members.' }).catch(() => null);
+          return true;
+        }
+        if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.BanMembers)) {
+          await message.channel.send({ content: 'Bot hat keine Permission: Ban Members.' }).catch(() => null);
+          return true;
+        }
+        const targetUser = await client.users.fetch(targetId).catch(() => null);
+        if (targetUser) await targetUser.send({ content: reason }).catch(() => null);
+        let banOk = true;
+        await message.guild.members.ban(targetId, { reason: `${message.author.tag}: ${reason}`.slice(0, 500) }).catch(async () => {
+          banOk = false;
+          await message.channel.send({ content: 'Ban fehlgeschlagen (ID/Hierarchie/Permissions pruefen).' }).catch(() => null);
+        });
+        if (!banOk) return true;
+        await message.channel.send({ content: `Ban ausgefuehrt fuer <@${targetId}>.` }).catch(() => null);
+        return true;
+      }
+
+      const targetMember = await message.guild.members.fetch(targetId).catch(() => null);
+      if (!targetMember) {
+        await message.channel.send({ content: 'User nicht im Server gefunden.' }).catch(() => null);
+        return true;
+      }
+
+      if (mode === 'kick') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.KickMembers)) {
+          await message.channel.send({ content: 'Dir fehlt die Permission: Kick Members.' }).catch(() => null);
+          return true;
+        }
+        if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.KickMembers)) {
+          await message.channel.send({ content: 'Bot hat keine Permission: Kick Members.' }).catch(() => null);
+          return true;
+        }
+        await targetMember.send({ content: reason }).catch(() => null);
+        let kickOk = true;
+        await targetMember.kick(`${message.author.tag}: ${reason}`.slice(0, 500)).catch(async () => {
+          kickOk = false;
+          await message.channel.send({ content: 'Kick fehlgeschlagen (Hierarchie/Permissions pruefen).' }).catch(() => null);
+        });
+        if (!kickOk) return true;
+        await message.channel.send({ content: `Kick ausgefuehrt fuer <@${targetId}>.` }).catch(() => null);
+        return true;
+      }
+
+      if (mode === 'mute') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          await message.channel.send({ content: 'Dir fehlt die Permission: Moderate Members.' }).catch(() => null);
+          return true;
+        }
+        if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ModerateMembers)) {
+          await message.channel.send({ content: 'Bot hat keine Permission: Moderate Members.' }).catch(() => null);
+          return true;
+        }
+        const durationArg = String((args && args[1]) || '10m');
+        const durationMsRaw = parseDurationToMs(durationArg);
+        const durationMs = Math.max(60_000, Math.min(2_419_200_000, Number(durationMsRaw || 600_000)));
+        let muteOk = true;
+        await targetMember.timeout(durationMs, `${message.author.tag}: ${reason}`.slice(0, 500)).catch(async () => {
+          muteOk = false;
+          await message.channel.send({ content: 'Mute fehlgeschlagen (Hierarchie/Permissions pruefen).' }).catch(() => null);
+        });
+        if (!muteOk) return true;
+        await message.channel.send({ content: `Mute ausgefuehrt fuer <@${targetId}> (${humanDuration(durationMs)}).` }).catch(() => null);
+        return true;
+      }
+
+      if (mode === 'role') {
+        if (!message.member.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+          await message.channel.send({ content: 'Dir fehlt die Permission: Manage Roles.' }).catch(() => null);
+          return true;
+        }
+        if (!botMember || !botMember.permissions.has(PermissionsBitField.Flags.ManageRoles)) {
+          await message.channel.send({ content: 'Bot hat keine Permission: Manage Roles.' }).catch(() => null);
+          return true;
+        }
+        const roleSpec = String((args && args[1]) || entry.response || '').trim();
+        const role = resolveDynamicRole(message.guild, roleSpec);
+        if (!role) {
+          await message.channel.send({ content: 'Rolle nicht gefunden. Nutze Rollenname oder Rollen-ID im Antwortfeld.' }).catch(() => null);
+          return true;
+        }
+        const hasRole = targetMember.roles.cache.has(role.id);
+        let roleOk = true;
+        if (hasRole) {
+          await targetMember.roles.remove(role, `${message.author.tag}: dynamic role remove`).catch(() => { roleOk = false; });
+        } else {
+          await targetMember.roles.add(role, `${message.author.tag}: dynamic role add`).catch(() => { roleOk = false; });
+        }
+        if (!roleOk) {
+          await message.channel.send({ content: 'Role-Aktion fehlgeschlagen (Hierarchie/Permissions pruefen).' }).catch(() => null);
+          return true;
+        }
+        await message.channel.send({ content: `${hasRole ? 'Rolle entfernt' : 'Rolle vergeben'}: <@&${role.id}> bei <@${targetId}>.` }).catch(() => null);
+        return true;
+      }
+    }
+
+    if (mode === 'embed') {
       const colorNum = parseInt(String(entry.embedColor || '#87CEFA').replace('#', ''), 16);
       const emb = new EmbedBuilder()
         .setColor(Number.isFinite(colorNum) ? colorNum : 0x87CEFA)
