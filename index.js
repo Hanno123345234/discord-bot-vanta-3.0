@@ -13509,11 +13509,12 @@ client.on('messageCreate', async (message) => {
         .setStyle(ButtonStyle.Danger)
     );
 
-    const attachmentLinks = attachments.map((a) => String(a.url || '')).filter(Boolean);
+    const firstImageUrl = String((attachments[0] && attachments[0].url) || '').trim();
     const emb = new EmbedBuilder()
       .setTitle('CC Priority')
-      .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})${attachmentLinks.length ? `\n\nAttachments:\n${attachmentLinks.join('\n')}` : ''}`)
+      .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})`)
       .setColor(0x87CEFA);
+    if (firstImageUrl) emb.setThumbnail(firstImageUrl);
 
     await reviewCh.send({
       embeds: [emb],
