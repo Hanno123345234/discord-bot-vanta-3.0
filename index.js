@@ -8176,13 +8176,6 @@ try {
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  try {
-    const rawPrefixGate = String(message.content || '').trim();
-    if (rawPrefixGate && /^[*!&-]/.test(rawPrefixGate)) {
-      if (!hasStaffCommandAccess(message)) return;
-    }
-  } catch (e) {}
-
   // Natural-language helper: users ask where to put Discord bot token
   try {
     const rawMsg = String(message.content || '').trim();
