@@ -39,7 +39,52 @@ function buildAnnouncement({ mode, regTs, gameTs, staffMentions, includeEveryone
   const displayRegTs = safeRegTs;
   const displayGameTs = safeGameTs;
 
-  if (mode === 'alpha') {
+  if (mode === 'solo') {
+    lines.push('### Solo Practice Session <:champion:1472618728108724458>');
+    lines.push('');
+    lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
+    lines.push(`> * **Game 1/2:** <t:${displayGameTs}:t>`);
+    lines.push('');
+    lines.push(`Staff in charge: ${staffMentions || '@Staff'}`);
+    lines.push('');
+    lines.push('**-** Session lasts **2 games**, **Miss a single game and you will be banned.**');
+    lines.push('**-** Make sure to read <#1471490037945204918> & <#1471489805979484333> **before** playing.');
+    lines.push('**-** **Bottom 10** will lose access');
+    lines.push('');
+    lines.push('**110+ reacts | 215+ for second** (1 per solo)');
+    lines.push('');
+    if (includeEveryone) lines.push('@everyone');
+  } else if (mode === 'duo' || mode === 'champ') {
+    lines.push('### Duo Practice Session <:champion:1472618728108724458>');
+    lines.push('');
+    lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
+    lines.push(`> * **Game 1/3:** <t:${displayGameTs}:t>`);
+    lines.push('');
+    lines.push(`Staff in charge: ${staffMentions || '@Staff'}`);
+    lines.push('');
+    lines.push('**-** Session lasts **3 games**, **Miss a single game and you will be banned.**');
+    lines.push('**-** Make sure to read <#1471490037945204918> & <#1471489805979484333> **before** playing.');
+    lines.push('**-** **Bottom 3** will lose access');
+    lines.push('');
+    lines.push('**55+ reacts | 110+ for second** (1 per duo)');
+    lines.push('');
+    if (includeEveryone) lines.push('@everyone');
+  } else if (mode === 'trio') {
+    lines.push('### Trio Practice Session <:champion:1472618728108724458>');
+    lines.push('');
+    lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
+    lines.push(`> * **Game 1/3:** <t:${displayGameTs}:t>`);
+    lines.push('');
+    lines.push(`Staff in charge: ${staffMentions || '@Staff'}`);
+    lines.push('');
+    lines.push('**-** Session lasts **3 games**, **Miss a single game and you will be banned.**');
+    lines.push('**-** Make sure to read <#1471490037945204918> & <#1471489805979484333> **before** playing.');
+    lines.push('**-** **Bottom 3** will lose access');
+    lines.push('');
+    lines.push('**40+ reacts | 80+ for second** (1 per trio)');
+    lines.push('');
+    if (includeEveryone) lines.push('@everyone');
+  } else if (mode === 'alpha') {
     lines.push('### Duo Practice Session <:alpha:1433978499601006725>');
     lines.push('');
     lines.push(`> * **Registration Opens:** <t:${displayRegTs}:t>`);
@@ -100,6 +145,10 @@ module.exports = {
         choices: [
           { name: 'beta', value: 'beta' },
           { name: 'alpha', value: 'alpha' },
+          { name: 'champ', value: 'champ' },
+          { name: 'duo', value: 'duo' },
+          { name: 'solo', value: 'solo' },
+          { name: 'trio', value: 'trio' },
         ],
       },
       {
@@ -121,7 +170,14 @@ module.exports = {
     await interaction.deferReply({ ephemeral: true });
 
     const modeRaw = interaction.options.getString('mode') || 'beta';
-    const mode = String(modeRaw).toLowerCase() === 'alpha' ? 'alpha' : 'beta';
+    const modeNorm = String(modeRaw).toLowerCase();
+    const mode = modeNorm === 'alpha'
+      ? 'alpha'
+      : (modeNorm === 'solo'
+        ? 'solo'
+        : (modeNorm === 'trio'
+        ? 'trio'
+        : ((modeNorm === 'champ' || modeNorm === 'duo') ? 'duo' : 'beta')));
     const regRaw = interaction.options.getString('reg', true);
     const gameRaw = interaction.options.getString('game', true);
     const staffMentions = interaction.options.getString('staff') || null;

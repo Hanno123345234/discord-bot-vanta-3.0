@@ -220,6 +220,11 @@ const VOICE_CREATE_PATH = path.join(DATA_DIR, 'voice_create.json');
 const DROPMAP_MARKS_PATH = path.join(DATA_DIR, 'dropmap_marks.json');
 const APPEAL_STATE_PATH = path.join(DATA_DIR, 'appeal_states.json');
 const APPEAL_REVIEW_CHANNEL_ID = process.env.APPEAL_REVIEW_CHANNEL_ID || '1482105356233605191';
+const DYNAMIC_COMMANDS_LOCAL_PATH = path.join(DATA_DIR, 'dynamic_commands.json');
+const DYNAMIC_COMMANDS_URL = String(process.env.DYNAMIC_COMMANDS_URL || '').trim();
+const DYNAMIC_COMMANDS_BOT_KEY = String(process.env.DYNAMIC_COMMANDS_BOT_KEY || '').trim();
+const DYNAMIC_COMMANDS_REFRESH_MS = Math.max(15_000, Number(process.env.DYNAMIC_COMMANDS_REFRESH_MS || 60_000));
+const DYNAMIC_COMMANDS_ALLOW_OVERRIDE = String(process.env.DYNAMIC_COMMANDS_ALLOW_OVERRIDE || 'false').toLowerCase() === 'true';
 
 // Streams/watchers storage
 const STREAMS_PATH = path.join(DATA_DIR, 'streams.json');
@@ -307,6 +312,154 @@ function saveJson(p, obj) {
     return true;
   } catch (e) {
     console.error('Failed to save JSON', p, e);
+    return false;
+  }
+}
+
+const RESERVED_PREFIX_COMMANDS = new Set([
+  'help','h','allban','rebanall','reban','clearmodlogs','membercount','mc','invite','rules','8ball','flip',
+  'dice','roll','wheel','wheelhelp','wheelinfo','spins','admin','clearracism','purgeracist','cleartoxic','purgehate',
+  'sa','sb','shelp','beta','alpha','rate','joke','compliment','md','modlogs','mds','say','close','case','cases',
+  'warn','ban','bancm','kick','unban','sgrief','softgrief','miss','lmiss','mute','unmute','santa','gift','snow',
+  'advent','join','play','pause','resume','stop','queue','leave','music','del','delete','role','setautorole','autorole',
+  'reason','duration','dcase','stream','streams','watch','ticket','dp','db','uploads','env','session','create'
+]);
+
+const dynamicCommandsState = {
+  byTrigger: new Map(),
+  lastSyncAt: 0,
+  lastError: null,
+  source: 'none',
+};
+let dynamicCommandsRefreshTimer = null;
+
+function normalizeDynamicCommandEntry(entry) {
+  const trigger = String(entry && entry.trigger ? entry.trigger : '').trim().toLowerCase();
+  if (!/^[a-z0-9][a-z0-9_-]{1,31}$/.test(trigger)) return null;
+  const response = String(entry && (entry.response || entry.content) ? (entry.response || entry.content) : '').trim();
+  if (!response || response.length > 1800) return null;
+  const modeRaw = String(entry && entry.mode ? entry.mode : 'text').trim().toLowerCase();
+  const mode = (modeRaw === 'embed') ? 'embed' : 'text';
+  const embedTitle = String(entry && entry.embedTitle ? entry.embedTitle : '').trim().slice(0, 120);
+  const colorRaw = String(entry && entry.embedColor ? entry.embedColor : '#87CEFA').trim();
+  const embedColor = /^#?[0-9a-fA-F]{6}$/.test(colorRaw) ? `#${colorRaw.replace(/^#/, '').toUpperCase()}` : '#87CEFA';
+  return {
+    trigger,
+    response,
+    enabled: entry && entry.enabled === false ? false : true,
+    mode,
+    embedTitle,
+    embedColor,
+  };
+}
+
+function applyDynamicCommandList(list, source = 'unknown') {
+  const next = new Map();
+  for (const raw of (Array.isArray(list) ? list : [])) {
+    const item = normalizeDynamicCommandEntry(raw);
+    if (!item || !item.enabled) continue;
+    if (next.has(item.trigger)) continue;
+    next.set(item.trigger, item);
+  }
+  dynamicCommandsState.byTrigger = next;
+  dynamicCommandsState.lastSyncAt = Date.now();
+  dynamicCommandsState.lastError = null;
+  dynamicCommandsState.source = source;
+}
+
+function loadDynamicCommandsFromLocalFile() {
+  try {
+    const raw = loadJson(DYNAMIC_COMMANDS_LOCAL_PATH, { commands: [] });
+    const list = Array.isArray(raw && raw.commands) ? raw.commands : [];
+    applyDynamicCommandList(list, `local:${path.basename(DYNAMIC_COMMANDS_LOCAL_PATH)}`);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function refreshDynamicCommands(force = false) {
+  try {
+    const now = Date.now();
+    if (!force && (now - Number(dynamicCommandsState.lastSyncAt || 0)) < DYNAMIC_COMMANDS_REFRESH_MS) return;
+
+    if (!DYNAMIC_COMMANDS_URL) {
+      loadDynamicCommandsFromLocalFile();
+      return;
+    }
+
+    const headers = {};
+    if (DYNAMIC_COMMANDS_BOT_KEY) headers['x-bot-key'] = DYNAMIC_COMMANDS_BOT_KEY;
+    const response = await fetch(DYNAMIC_COMMANDS_URL, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok || !payload || !Array.isArray(payload.commands)) {
+      throw new Error(String((payload && payload.error) || `HTTP ${response.status}`));
+    }
+    applyDynamicCommandList(payload.commands, 'remote');
+  } catch (e) {
+    dynamicCommandsState.lastError = String(e && e.message ? e.message : e);
+    if (!dynamicCommandsState.byTrigger.size) loadDynamicCommandsFromLocalFile();
+  }
+}
+
+function renderDynamicCommandTemplate(input, ctx) {
+  const src = String(input || '');
+  if (!src) return '';
+  const args = Array.isArray(ctx && ctx.args) ? ctx.args : [];
+  const map = {
+    user: ctx && ctx.userMention ? ctx.userMention : '',
+    username: ctx && ctx.username ? ctx.username : '',
+    server: ctx && ctx.serverName ? ctx.serverName : '',
+    channel: ctx && ctx.channelMention ? ctx.channelMention : '',
+    args: args.join(' '),
+    prefix: PREFIX,
+    command: ctx && ctx.command ? ctx.command : '',
+    arg1: args[0] || '',
+    arg2: args[1] || '',
+    arg3: args[2] || '',
+    arg4: args[3] || '',
+    arg5: args[4] || '',
+  };
+  return src.replace(/\{(user|username|server|channel|args|prefix|command|arg1|arg2|arg3|arg4|arg5)\}/gi, (m, k) => map[String(k || '').toLowerCase()] || '');
+}
+
+async function tryExecuteDynamicPrefixCommand(message, command, args) {
+  try {
+    if (!message || !message.channel || !command) return false;
+    await refreshDynamicCommands(false);
+    if (!DYNAMIC_COMMANDS_ALLOW_OVERRIDE && RESERVED_PREFIX_COMMANDS.has(String(command).toLowerCase())) return false;
+
+    const entry = dynamicCommandsState.byTrigger.get(String(command).toLowerCase());
+    if (!entry) return false;
+
+    const rendered = renderDynamicCommandTemplate(entry.response, {
+      command,
+      args,
+      userMention: `<@${message.author.id}>`,
+      username: message.author.username || '',
+      serverName: (message.guild && message.guild.name) ? message.guild.name : '',
+      channelMention: (message.channel && message.channel.id) ? `<#${message.channel.id}>` : '',
+    }).slice(0, 1900);
+
+    if (!rendered) return false;
+    if (entry.mode === 'embed') {
+      const colorNum = parseInt(String(entry.embedColor || '#87CEFA').replace('#', ''), 16);
+      const emb = new EmbedBuilder()
+        .setColor(Number.isFinite(colorNum) ? colorNum : 0x87CEFA)
+        .setDescription(rendered)
+        .setTimestamp();
+      if (entry.embedTitle) emb.setTitle(String(entry.embedTitle));
+      await message.channel.send({ embeds: [emb], allowedMentions: { parse: ['users', 'roles'] } }).catch(() => null);
+      return true;
+    }
+
+    await message.channel.send({ content: rendered, allowedMentions: { parse: ['users', 'roles'] } }).catch(() => null);
+    return true;
+  } catch (e) {
     return false;
   }
 }
@@ -1786,7 +1939,48 @@ function resolveAnnouncementModeFromRawAndChannel(raw, channelId) {
     if (found && found.id) return String(found.id);
   } catch (e) {}
   const rawLower = String(raw || '').toLowerCase();
+  if (/(champ|champion|trio)/.test(rawLower)) return 'champ';
   return /alpha/.test(rawLower) ? 'alpha' : 'beta';
+}
+
+function resolveAnnouncementModeForSession(raw, channelId, sessionIndex) {
+  const baseMode = resolveAnnouncementModeFromRawAndChannel(raw, channelId);
+  if (baseMode !== 'champ') return baseMode;
+
+  try {
+    const txt = String(raw || '');
+    const normalized = txt
+      .replace(/[\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '')
+      .replace(/[*_`~]/g, '');
+    const idx = Number(sessionIndex || 0);
+    const pickFrom = (line) => {
+      const m = String(line || '').match(/\b(duo|trio|solo)\b/i);
+      return m ? String(m[1]).toLowerCase() : null;
+    };
+
+    if (idx > 0) {
+      const re1 = new RegExp(`(?:^|\\n)\\s*${idx}\\s*[.)\\-:]?[^\\n]{0,180}`, 'i');
+      const m1 = normalized.match(re1);
+      if (m1 && pickFrom(m1[0])) return pickFrom(m1[0]);
+
+      const re2 = new RegExp(`(?:^|\\n)\\s*(?:session|sess)\\s*${idx}\\b[^\\n]{0,180}`, 'i');
+      const m2 = normalized.match(re2);
+      if (m2 && pickFrom(m2[0])) return pickFrom(m2[0]);
+
+      const re3 = new RegExp(`(?:^|\\n)[^\\n]{0,120}\\b${idx}\\b[^\\n]{0,120}`, 'i');
+      const m3 = normalized.match(re3);
+      if (m3 && pickFrom(m3[0])) return pickFrom(m3[0]);
+    }
+
+    const hasDuo = /\bduo\b/i.test(normalized);
+    const hasTrio = /\btrio\b/i.test(normalized);
+    const hasSolo = /\bsolo\b/i.test(normalized);
+    if (hasTrio && !hasDuo && !hasSolo) return 'trio';
+    if (hasSolo && !hasDuo && !hasTrio) return 'solo';
+    if (hasDuo && !hasTrio && !hasSolo) return 'duo';
+  } catch (e) {}
+
+  return 'duo';
 }
 
 function normalizeStaffMentions(staffRaw) {
@@ -1797,6 +1991,20 @@ function normalizeStaffMentions(staffRaw) {
     return '@Staff';
   } catch (e) {
     return '@Staff';
+  }
+}
+
+function isGenericStaffPlaceholder(staffRaw) {
+  try {
+    const s = String(staffRaw || '').toLowerCase().trim();
+    if (!s) return true;
+    const compact = s.replace(/[\s_*`~()[\]{}:;,.\-]/g, '');
+    if (!compact) return true;
+    if (compact === 'staff' || compact === '@staff') return true;
+    if (compact === 'unassigned' || compact === 'none' || compact === 'tbd') return true;
+    return false;
+  } catch (e) {
+    return true;
   }
 }
 
@@ -1935,6 +2143,28 @@ function parseSessionMessage(content, referenceDate) {
   const lines = String(norm || '').split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   try { console.log('[session-debug] parseSessionMessage lines:', lines); } catch (e) {}
   const sessions = [];
+  const sessionModeByIndex = new Map();
+
+  try {
+    for (const rawLine of lines) {
+      const line = String(rawLine || '')
+        .replace(/^[>\s\|│\u2502]+/, '')
+        .replace(/[*_`~]/g, '')
+        .trim();
+      if (!line) continue;
+
+      const m1 = line.match(/^session\s*(\d+)\s*[:\-–—]?\s*(duo|trio|solo)\b/i);
+      if (m1) {
+        sessionModeByIndex.set(Number(m1[1]), String(m1[2]).toLowerCase());
+        continue;
+      }
+
+      const m2 = line.match(/^(\d+)\s*[.)\-:]\s*(duo|trio|solo)\b/i);
+      if (m2) {
+        sessionModeByIndex.set(Number(m2[1]), String(m2[2]).toLowerCase());
+      }
+    }
+  } catch (e) { /* ignore mode hint parse failures */ }
 
   // Global numbered-lines extractor: handles cases where line-splitting is noisy and markup is present
   try {
@@ -1982,10 +2212,10 @@ function parseSessionMessage(content, referenceDate) {
         const next = lines[i+1];
         if (next) {
           const nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
-          const smt = nextClean.match(/^(?:staff in charge:|staff[:\s\-–]*)\s*([\s\S]+)/i);
+          const smt = nextClean.match(/^(?:(?:session\s*)?staff in charge:|(?:session\s*)?staff[:\s\-–]*)\s*([\s\S]+)/i);
           if (smt) staff = (smt[1] || '').trim();
         }
-        lineFound.push({ idx, start: sd.getTime(), end: ed.getTime(), staff: normalizeStaffText(staff) });
+        lineFound.push({ idx, start: sd.getTime(), end: ed.getTime(), staff: normalizeStaffText(staff), mode: Number.isFinite(idx) ? (sessionModeByIndex.get(Number(idx)) || '') : '' });
       }
     }
     if (lineFound.length) {
@@ -1994,7 +2224,10 @@ function parseSessionMessage(content, referenceDate) {
       let out;
       if (hasIndex) out = lineFound.slice().sort((a,b) => (a.idx||0)-(b.idx||0));
       else out = lineFound.slice();
-      for (const s of out) sessions.push({ index: s.idx || (sessions.length + 1), start: s.start, end: s.end, staff: s.staff });
+      for (const s of out) {
+        const outIndex = s.idx || (sessions.length + 1);
+        sessions.push({ index: outIndex, start: s.start, end: s.end, staff: s.staff, mode: s.mode || sessionModeByIndex.get(Number(outIndex)) || '' });
+      }
     }
   } catch (e) { /* ignore */ }
 
@@ -2026,7 +2259,7 @@ function parseSessionMessage(content, referenceDate) {
     s = s.replace(/^>\s*/g, '');
     s = s.replace(/\*+\s*/g, '');
     // remove labels like "Staff in charge:" or "Staff:" or "- Staff:"
-    s = s.replace(/^(staff in charge:\s*|staff[:\s]*)/i, '');
+    s = s.replace(/^(?:(?:session\s*)?staff in charge:\s*|(?:session\s*)?staff[:\s]*)/i, '');
     // Strip channel mentions/names that may leak into parsed staff lines
     s = s.replace(/<#\d+>/g, '').trim();
     // If this is the footer line ("ping me to claim"), treat as not-a-staff assignment
@@ -2105,7 +2338,7 @@ function parseSessionMessage(content, referenceDate) {
   // Announcement-style messages and the new markdown templates (blockquote + bold), e.g.:
   // > * **Registration Opens:** <Time>
   // > * **Game 1/3:** <Time>
-  if (/registration opens|game\s*1\/[0-9]+|duo practice session/i.test(cleaned2)) {
+  if (/registration opens|game\s*1\/[0-9]+|duo practice session|trio practice session|champ/i.test(cleaned2)) {
     try {
       // Normalize formatting for easier matching (remove repeat asterisks and blockquote markers)
       const normForMatch = cleaned2.replace(/\*+/g, '*').replace(/^>\s*/gm, '').replace(/\s+\*\s+/g, ' ').trim();
@@ -2187,12 +2420,12 @@ function parseSessionMessage(content, referenceDate) {
         if (next) {
           let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
           nextClean = nextClean.replace(/^[*_`~\s]+/, '');
-          if (/^staff/i.test(nextClean)) {
-            staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
+          if (/^(?:session\s*)?staff/i.test(nextClean)) {
+            staff = nextClean.replace(/^(?:session\s*)?staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
           }
         }
       }
-        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff), mode: sessionModeByIndex.get(Number(idx)) || '' });
         continue;
       }
       // fallback to previous strict match if needed
@@ -2219,8 +2452,8 @@ function parseSessionMessage(content, referenceDate) {
         if (next) {
           let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
           nextClean = nextClean.replace(/^[*_`~\s]+/, '');
-          if (/^staff/i.test(nextClean)) {
-            staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s]*/i, '').trim();
+          if (/^(?:session\s*)?staff/i.test(nextClean)) {
+            staff = nextClean.replace(/^(?:session\s*)?staff(?:\s+in\s+charge)?[:\s]*/i, '').trim();
           }
         }
       }
@@ -2234,7 +2467,7 @@ function parseSessionMessage(content, referenceDate) {
       endDt.setHours(eh, em, 0, 0);
       // if end before start, assume next day
       if (endDt.getTime() <= startDt.getTime()) endDt.setDate(endDt.getDate() + 1);
-      sessions.push({ index: idx, start: startDt.getTime(), end: endDt.getTime(), staff: normalizeStaffText(staff) });
+      sessions.push({ index: idx, start: startDt.getTime(), end: endDt.getTime(), staff: normalizeStaffText(staff), mode: sessionModeByIndex.get(Number(idx)) || '' });
     }
 
     // Per-line fallback: any line with 2+ timestamp tokens
@@ -2252,12 +2485,12 @@ function parseSessionMessage(content, referenceDate) {
           if (next) {
             let nextClean = String(next).replace(/^[>\s\|│\u2502]+/,'').trim();
             nextClean = nextClean.replace(/^[*_`~\s]+/, '');
-            if (/^staff/i.test(nextClean)) {
-              staff = nextClean.replace(/^staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
+            if (/^(?:session\s*)?staff/i.test(nextClean)) {
+              staff = nextClean.replace(/^(?:session\s*)?staff(?:\s+in\s+charge)?[:\s\*]*/i, '').trim();
             }
           }
         }
-        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+        sessions.push({ index: idx, start: startTs, end: endTs, staff: normalizeStaffText(staff), mode: sessionModeByIndex.get(Number(idx)) || '' });
       }
     }
   }
@@ -2304,7 +2537,7 @@ function parseSessionMessage(content, referenceDate) {
             const staffMatch = after.match(/\b(?:staff|leitung|team)\b\s*[:\-–]\s*([^\n\r]{1,120})/i);
             if (staffMatch) staff = staffMatch[1] ? staffMatch[1].trim() : staffMatch[0];
           } catch (e) {}
-          if (startTs && endTs) sessions.push({ index: idxFound, start: startTs, end: endTs, staff: normalizeStaffText(staff) });
+          if (startTs && endTs) sessions.push({ index: idxFound, start: startTs, end: endTs, staff: normalizeStaffText(staff), mode: sessionModeByIndex.get(Number(idxFound)) || '' });
         }
       }
     } catch (e) {
@@ -2373,6 +2606,18 @@ function parseSessionMessage(content, referenceDate) {
       if (!existingStaff && incomingStaff) {
         deduped[pos] = { ...deduped[pos], staff: s.staff };
       }
+      const existingMode = String(deduped[pos].mode || '').trim();
+      const incomingMode = String(s && s.mode ? s.mode : '').trim();
+      if (!existingMode && incomingMode) {
+        deduped[pos] = { ...deduped[pos], mode: incomingMode };
+      }
+    }
+  }
+
+  for (let i = 0; i < deduped.length; i++) {
+    const idx = Number(deduped[i] && deduped[i].index ? deduped[i].index : i + 1);
+    if (!deduped[i].mode && sessionModeByIndex.has(idx)) {
+      deduped[i] = { ...deduped[i], mode: sessionModeByIndex.get(idx) };
     }
   }
 
@@ -3089,7 +3334,7 @@ async function sendSessionDm(clientOrUserId, content) {
           } else text = JSON.stringify(content).slice(0, 1900);
         }
 
-        const isAnnouncement = /Duo Practice Session|Registration Opens|Game 1\/3|<t:\d+:t>/i.test(text || '');
+        const isAnnouncement = /Duo Practice Session|Trio Practice Session|Registration Opens|Game 1\/[0-9]+|<t:\d+:t>|champ/i.test(text || '');
         if (!isAnnouncement) {
           const ch = await client.channels.fetch(String(MIRROR_DM_CHANNEL_ID)).catch(()=>null);
           if (ch && typeof ch.send === 'function') {
@@ -5653,14 +5898,9 @@ client.on('interactionCreate', async (interaction) => {
           let saBuilder = null;
           try { saBuilder = require(path.join(DATA_DIR, 'commands', 'sa.js')); } catch (e) { saBuilder = null; }
           const sess = (data.parsed && Array.isArray(data.parsed)) ? data.parsed.find(x => Number(x.index) === Number(sessionIndex)) || data.parsed[0] : null;
-          let mode = 'beta';
-          try {
-            const cfgAll = loadJson(path.join(DATA_DIR, 'config.json'), {});
-            const tracks = (cfgAll && cfgAll.sessionAnnouncements && Array.isArray(cfgAll.sessionAnnouncements.tracks)) ? cfgAll.sessionAnnouncements.tracks : [];
-            const found = tracks.find(t => String(t.channelId) === String(data.originChannelId) || String(t.channelId) === String(interaction.channelId));
-            if (found && found.id) mode = String(found.id);
-            else { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
-          } catch (e) { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
+          const mode = (sess && sess.mode)
+            ? String(sess.mode).toLowerCase()
+            : resolveAnnouncementModeForSession(data.raw, data.originChannelId || interaction.channelId, sessionIndex);
 
           // Prefer the selected session timestamps to ensure Announce Sx uses the correct time
           let gameTs = null;
@@ -5683,12 +5923,15 @@ client.on('interactionCreate', async (interaction) => {
           } catch (e) { /* ignore */ }
           if (!gameTs) gameTs = Math.floor(Date.now() / 1000);
           if (!regTs) regTs = gameTs - (15 * 60);
-          let staffMentions = (sess && sess.staff) ? sess.staff : '';
-          if (!staffMentions) {
+          let staffMentions = normalizeStaffMentions((sess && sess.staff) ? sess.staff : '');
+          if (isGenericStaffPlaceholder(staffMentions)) {
             const m = String(data.raw || '').match(/<@!?(\d+)>/);
             if (m) staffMentions = `<@${m[1]}>`;
           }
-          if (!staffMentions) {
+          if (isGenericStaffPlaceholder(staffMentions)) {
+            staffMentions = `<@${interaction.user.id}>`;
+          }
+          if (isGenericStaffPlaceholder(staffMentions)) {
             const cfg2 = loadGuildConfig(data.guildId);
             if (cfg2 && cfg2.staffRoleId) staffMentions = `<@&${String(cfg2.staffRoleId).replace(/[<@&>]/g,'')}>`;
             else staffMentions = '@staff';
@@ -5802,7 +6045,10 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             // Fallbacks
-            if (!staffMentions) {
+            if (isGenericStaffPlaceholder(staffMentions)) {
+              staffMentions = `<@${interaction.user.id}>`;
+            }
+            if (isGenericStaffPlaceholder(staffMentions)) {
               const cfg2 = loadGuildConfig(data.guildId);
               if (cfg2 && cfg2.staffRoleId) staffMentions = `<@&${String(cfg2.staffRoleId).replace(/[<@&>]/g,'')}>`;
               else staffMentions = '@staff';
@@ -5810,18 +6056,10 @@ client.on('interactionCreate', async (interaction) => {
             if (!regTs) regTs = Math.floor(Date.now()/1000);
             if (!gameTs) gameTs = regTs + (15 * 60);
 
-            // determine mode (alpha|beta) using config tracks mapping, fallback to raw text
-            let mode = 'beta';
-            try {
-              const cfgAll = loadJson(path.join(DATA_DIR, 'config.json'), {});
-              const tracks = (cfgAll && cfgAll.sessionAnnouncements && Array.isArray(cfgAll.sessionAnnouncements.tracks)) ? cfgAll.sessionAnnouncements.tracks : [];
-              const found = tracks.find(t => String(t.channelId) === String(data.originChannelId) || String(t.channelId) === String(interaction.channelId));
-              if (found && found.id) mode = String(found.id);
-              else {
-                const rawLower = String(data.raw || '').toLowerCase();
-                mode = /alpha/.test(rawLower) ? 'alpha' : 'beta';
-              }
-            } catch (e) { const rawLower = String(data.raw || '').toLowerCase(); mode = /alpha/.test(rawLower) ? 'alpha' : 'beta'; }
+            // determine mode (alpha|beta|champ) using config tracks mapping, fallback to raw text
+            const mode = (data.parsed && Array.isArray(data.parsed) && data.parsed[0] && data.parsed[0].mode)
+              ? String(data.parsed[0].mode).toLowerCase()
+              : resolveAnnouncementModeForSession(data.raw, data.originChannelId || interaction.channelId, null);
 
             const includeEveryone = true;
             const built = saBuilder.buildAnnouncement({ mode: mode, regTs, gameTs, staffMentions, includeEveryone });
@@ -6288,6 +6526,13 @@ client.on('ready', () => {
   try { initPreRegScheduler(); } catch (e) {}
   try { initPreRegPanelStates(); } catch (e) {}
   try { initTempBanScheduler(); } catch (e) {}
+  try { refreshDynamicCommands(true).catch(() => {}); } catch (e) {}
+  try {
+    if (dynamicCommandsRefreshTimer) clearInterval(dynamicCommandsRefreshTimer);
+    dynamicCommandsRefreshTimer = setInterval(() => {
+      refreshDynamicCommands(false).catch(() => {});
+    }, DYNAMIC_COMMANDS_REFRESH_MS);
+  } catch (e) {}
 
   // Seed voice activity sessions for members already in voice.
   try { voiceActivity.seedFromClient(client); } catch (e) {}
@@ -9165,6 +9410,10 @@ client.on('messageCreate', async (message) => {
   };
   if (usageByCommand[command] && args.length === 0) {
     return replyAsEmbed(message, `Usage: ${usageByCommand[command]}`);
+  }
+
+  if (await tryExecuteDynamicPrefixCommand(message, command, args)) {
+    return;
   }
 
   // Re-ban all currently banned users and log to modlogs (*md)
