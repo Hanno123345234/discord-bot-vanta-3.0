@@ -13488,7 +13488,7 @@ client.on('messageCreate', async (message) => {
     const noText = !String(message.content || '').trim();
 
     if (!hasOnlyImages || !noText) {
-      const warn = await message.channel.send({ content: 'In diesem Channel ist nur ein Foto ohne Text erlaubt.' }).catch(() => null);
+      const warn = await message.channel.send({ content: 'Only image uploads without text are allowed in this channel.' }).catch(() => null);
       try { await message.delete().catch(() => null); } catch (e) {}
       if (warn) setTimeout(() => warn.delete().catch(() => {}), 7000);
       return;
@@ -13501,18 +13501,18 @@ client.on('messageCreate', async (message) => {
     const row = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(`photo_review_accept:${message.author.id}:${message.id}`)
-        .setLabel('Annehmen')
+        .setLabel('Accept')
         .setStyle(ButtonStyle.Success),
       new ButtonBuilder()
         .setCustomId(`photo_review_decline:${message.author.id}:${message.id}`)
-        .setLabel('Ablehnen')
+        .setLabel('Decline')
         .setStyle(ButtonStyle.Danger)
     );
 
     const firstImage = attachments[0];
     const emb = new EmbedBuilder()
-      .setTitle('Foto-Freigabe')
-      .setDescription(`Von: <@${message.author.id}>\nQuelle: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Zur Nachricht](${message.url})`)
+      .setTitle('Photo Review')
+      .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})`)
       .setColor(0x87CEFA)
       .setTimestamp();
     if (firstImage && firstImage.url) emb.setImage(firstImage.url);
@@ -13539,15 +13539,16 @@ client.on('interactionCreate', async (interaction) => {
       || actor.permissions.has(PermissionsBitField.Flags.Administrator)
     ));
     if (!canModerate) {
-      await interaction.reply({ content: 'Keine Berechtigung fuer diese Aktion.', ephemeral: true }).catch(() => null);
+      await interaction.reply({ content: 'You do not have permission for this action.', ephemeral: true }).catch(() => null);
       return;
     }
 
     const parts = customId.split(':');
     const action = customId.startsWith('photo_review_accept:') ? 'accept' : 'decline';
     const targetUserId = String(parts[1] || '');
+    const sourceMessageId = String(parts[2] || '');
     if (!targetUserId) {
-      await interaction.reply({ content: 'Ungueltige Button-Daten.', ephemeral: true }).catch(() => null);
+      await interaction.reply({ content: 'Invalid button payload.', ephemeral: true }).catch(() => null);
       return;
     }
 
@@ -13556,15 +13557,28 @@ client.on('interactionCreate', async (interaction) => {
 
     if (action === 'accept') {
       if (!targetMember) {
-        await interaction.reply({ content: 'User nicht im Server gefunden.', ephemeral: true }).catch(() => null);
+        await interaction.reply({ content: 'User was not found in this server.', ephemeral: true }).catch(() => null);
         return;
       }
       const role = guild.roles.cache.get(PHOTO_REVIEW_ROLE_ID) || await guild.roles.fetch(PHOTO_REVIEW_ROLE_ID).catch(() => null);
       if (!role) {
-        await interaction.reply({ content: 'Freigabe-Rolle nicht gefunden.', ephemeral: true }).catch(() => null);
+        await interaction.reply({ content: 'Approval role was not found.', ephemeral: true }).catch(() => null);
         return;
       }
       await targetMember.roles.add(role, `Foto angenommen von ${interaction.user.tag}`).catch(() => null);
+
+      try {
+        const sourceCh = guild.channels.cache.get(PHOTO_REVIEW_SOURCE_CHANNEL_ID)
+          || await guild.channels.fetch(PHOTO_REVIEW_SOURCE_CHANNEL_ID).catch(() => null);
+        if (sourceCh && isTextLike(sourceCh) && sourceMessageId) {
+          const srcMsg = await sourceCh.messages.fetch(sourceMessageId).catch(() => null);
+          if (srcMsg) {
+            await srcMsg.reply({
+              content: `Approved by <@${interaction.user.id}>. You have received <@&${PHOTO_REVIEW_ROLE_ID}>.`
+            }).catch(() => null);
+          }
+        }
+      } catch (e) {}
     }
 
     const disabledRows = (interaction.message.components || []).map((row) => {
@@ -13574,8 +13588,8 @@ client.on('interactionCreate', async (interaction) => {
 
     const oldContent = String(interaction.message.content || '');
     const statusLine = action === 'accept'
-      ? `\n\nStatus: Angenommen von <@${interaction.user.id}> (Rolle vergeben)`
-      : `\n\nStatus: Abgelehnt von <@${interaction.user.id}>`;
+      ? `\n\nStatus: Accepted by <@${interaction.user.id}> (role assigned)`
+      : `\n\nStatus: Declined by <@${interaction.user.id}>`;
 
     await interaction.update({
       content: `${oldContent}${statusLine}`.slice(0, 1900),
