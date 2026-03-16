@@ -13509,18 +13509,15 @@ client.on('messageCreate', async (message) => {
         .setStyle(ButtonStyle.Danger)
     );
 
-    const firstImage = attachments[0];
+    const attachmentLinks = attachments.map((a) => String(a.url || '')).filter(Boolean);
     const emb = new EmbedBuilder()
-      .setTitle('Photo Review')
-      .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})`)
-      .setColor(0x87CEFA)
-      .setTimestamp();
-    if (firstImage && firstImage.url) emb.setImage(firstImage.url);
+      .setTitle('CC Priority')
+      .setDescription(`From: <@${message.author.id}>\nSource: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Jump to message](${message.url})${attachmentLinks.length ? `\n\nAttachments:\n${attachmentLinks.join('\n')}` : ''}`)
+      .setColor(0x87CEFA);
 
     await reviewCh.send({
       embeds: [emb],
-      components: [row],
-      files: attachments.map((a) => a.url).filter(Boolean)
+      components: [row]
     }).catch(() => null);
   } catch (e) {
     console.error('photo review message flow failed', e);
