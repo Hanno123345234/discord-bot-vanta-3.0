@@ -13461,6 +13461,131 @@ client.on('guildMemberUpdate', async (oldMember, newMember) => {
   } catch (e) { /* ignore role-log errors */ }
 });
 
+// Photo review flow (source -> review with accept/decline buttons)
+const PHOTO_REVIEW_SOURCE_CHANNEL_ID = '1483217486600994826';
+const PHOTO_REVIEW_TARGET_CHANNEL_ID = '1483217512723386480';
+const PHOTO_REVIEW_ROLE_ID = '1483217618658918441';
+
+function isImageAttachment(att) {
+  try {
+    if (!att) return false;
+    const contentType = String(att.contentType || '').toLowerCase();
+    if (contentType.startsWith('image/')) return true;
+    const name = String(att.name || att.url || '').toLowerCase();
+    return /\.(png|jpe?g|gif|webp|bmp|tiff?|heic|heif)$/i.test(name);
+  } catch (e) {
+    return false;
+  }
+}
+
+client.on('messageCreate', async (message) => {
+  try {
+    if (!message || !message.guild || message.author?.bot) return;
+    if (String(message.channel?.id || '') !== PHOTO_REVIEW_SOURCE_CHANNEL_ID) return;
+
+    const attachments = Array.from(message.attachments?.values?.() || []);
+    const hasOnlyImages = attachments.length > 0 && attachments.every(isImageAttachment);
+    const noText = !String(message.content || '').trim();
+
+    if (!hasOnlyImages || !noText) {
+      const warn = await message.channel.send({ content: 'In diesem Channel ist nur ein Foto ohne Text erlaubt.' }).catch(() => null);
+      try { await message.delete().catch(() => null); } catch (e) {}
+      if (warn) setTimeout(() => warn.delete().catch(() => {}), 7000);
+      return;
+    }
+
+    const reviewCh = message.guild.channels.cache.get(PHOTO_REVIEW_TARGET_CHANNEL_ID)
+      || await message.guild.channels.fetch(PHOTO_REVIEW_TARGET_CHANNEL_ID).catch(() => null);
+    if (!reviewCh || !isTextLike(reviewCh)) return;
+
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`photo_review_accept:${message.author.id}:${message.id}`)
+        .setLabel('Annehmen')
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`photo_review_decline:${message.author.id}:${message.id}`)
+        .setLabel('Ablehnen')
+        .setStyle(ButtonStyle.Danger)
+    );
+
+    const firstImage = attachments[0];
+    const emb = new EmbedBuilder()
+      .setTitle('Foto-Freigabe')
+      .setDescription(`Von: <@${message.author.id}>\nQuelle: <#${PHOTO_REVIEW_SOURCE_CHANNEL_ID}>\n[Zur Nachricht](${message.url})`)
+      .setColor(0x87CEFA)
+      .setTimestamp();
+    if (firstImage && firstImage.url) emb.setImage(firstImage.url);
+
+    await reviewCh.send({
+      embeds: [emb],
+      components: [row],
+      files: attachments.map((a) => a.url).filter(Boolean)
+    }).catch(() => null);
+  } catch (e) {
+    console.error('photo review message flow failed', e);
+  }
+});
+
+client.on('interactionCreate', async (interaction) => {
+  try {
+    if (!interaction || !interaction.isButton()) return;
+    const customId = String(interaction.customId || '');
+    if (!customId.startsWith('photo_review_accept:') && !customId.startsWith('photo_review_decline:')) return;
+
+    const actor = interaction.member;
+    const canModerate = !!(actor && actor.permissions && (
+      actor.permissions.has(PermissionsBitField.Flags.ManageRoles)
+      || actor.permissions.has(PermissionsBitField.Flags.Administrator)
+    ));
+    if (!canModerate) {
+      await interaction.reply({ content: 'Keine Berechtigung fuer diese Aktion.', ephemeral: true }).catch(() => null);
+      return;
+    }
+
+    const parts = customId.split(':');
+    const action = customId.startsWith('photo_review_accept:') ? 'accept' : 'decline';
+    const targetUserId = String(parts[1] || '');
+    if (!targetUserId) {
+      await interaction.reply({ content: 'Ungueltige Button-Daten.', ephemeral: true }).catch(() => null);
+      return;
+    }
+
+    const guild = interaction.guild;
+    const targetMember = guild ? await guild.members.fetch(targetUserId).catch(() => null) : null;
+
+    if (action === 'accept') {
+      if (!targetMember) {
+        await interaction.reply({ content: 'User nicht im Server gefunden.', ephemeral: true }).catch(() => null);
+        return;
+      }
+      const role = guild.roles.cache.get(PHOTO_REVIEW_ROLE_ID) || await guild.roles.fetch(PHOTO_REVIEW_ROLE_ID).catch(() => null);
+      if (!role) {
+        await interaction.reply({ content: 'Freigabe-Rolle nicht gefunden.', ephemeral: true }).catch(() => null);
+        return;
+      }
+      await targetMember.roles.add(role, `Foto angenommen von ${interaction.user.tag}`).catch(() => null);
+    }
+
+    const disabledRows = (interaction.message.components || []).map((row) => {
+      const comps = (row.components || []).map((comp) => ButtonBuilder.from(comp).setDisabled(true));
+      return new ActionRowBuilder().addComponents(comps);
+    });
+
+    const oldContent = String(interaction.message.content || '');
+    const statusLine = action === 'accept'
+      ? `\n\nStatus: Angenommen von <@${interaction.user.id}> (Rolle vergeben)`
+      : `\n\nStatus: Abgelehnt von <@${interaction.user.id}>`;
+
+    await interaction.update({
+      content: `${oldContent}${statusLine}`.slice(0, 1900),
+      components: disabledRows
+    }).catch(() => null);
+  } catch (e) {
+    console.error('photo review interaction failed', e);
+  }
+});
+
 // Resolve and validate token before login
 const { token: resolvedToken, source } = resolveToken();
 
