@@ -9441,6 +9441,13 @@ client.on('messageCreate', async (message) => {
   if (!message.content.startsWith(PREFIX)) return;
   const [raw, ...args] = message.content.slice(PREFIX.length).trim().split(/\s+/);
   const command = raw.toLowerCase();
+
+  // Execute website-managed dynamic commands before staff-role gating,
+  // so simple public commands (e.g. *hello) work for normal members.
+  if (await tryExecuteDynamicPrefixCommand(message, command, args)) {
+    return;
+  }
+
   if (!(await enforceRoleCommandAccess(message, command))) return;
 
   if (!command) return replyAsEmbed(message, 'Usage: *help');
@@ -9476,10 +9483,6 @@ client.on('messageCreate', async (message) => {
   };
   if (usageByCommand[command] && args.length === 0) {
     return replyAsEmbed(message, `Usage: ${usageByCommand[command]}`);
-  }
-
-  if (await tryExecuteDynamicPrefixCommand(message, command, args)) {
-    return;
   }
 
   // Re-ban all currently banned users and log to modlogs (*md)
