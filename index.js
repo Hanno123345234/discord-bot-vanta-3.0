@@ -2,6 +2,7 @@
 const path = require('path');
 const crypto = require('crypto');
 const https = require('https');
+const http = require('http');
 const CLAIMING_CONFIG = require('./claiming.config');
 let voiceActivity = null;
 try {
@@ -225,6 +226,9 @@ const DYNAMIC_COMMANDS_URL = String(process.env.DYNAMIC_COMMANDS_URL || '').trim
 const DYNAMIC_COMMANDS_BOT_KEY = String(process.env.DYNAMIC_COMMANDS_BOT_KEY || '').trim();
 const DYNAMIC_COMMANDS_REFRESH_MS = Math.max(15_000, Number(process.env.DYNAMIC_COMMANDS_REFRESH_MS || 60_000));
 const DYNAMIC_COMMANDS_ALLOW_OVERRIDE = String(process.env.DYNAMIC_COMMANDS_ALLOW_OVERRIDE || 'false').toLowerCase() === 'true';
+const DYNAMIC_COMMANDS_WEBHOOK_PORT = Number(process.env.DYNAMIC_COMMANDS_WEBHOOK_PORT || 0);
+const DYNAMIC_COMMANDS_WEBHOOK_HOST = String(process.env.DYNAMIC_COMMANDS_WEBHOOK_HOST || '0.0.0.0').trim();
+const DYNAMIC_COMMANDS_WEBHOOK_KEY = String(process.env.DYNAMIC_COMMANDS_WEBHOOK_KEY || '').trim();
 
 // Streams/watchers storage
 const STREAMS_PATH = path.join(DATA_DIR, 'streams.json');
@@ -328,10 +332,12 @@ const RESERVED_PREFIX_COMMANDS = new Set([
 const dynamicCommandsState = {
   byTrigger: new Map(),
   lastSyncAt: 0,
+  lastMissSyncAt: 0,
   lastError: null,
   source: 'none',
 };
 let dynamicCommandsRefreshTimer = null;
+let dynamicCommandsWebhookServer = null;
 
 function normalizeDynamicCommandEntry(entry) {
   const trigger = String(entry && entry.trigger ? entry.trigger : '').trim().toLowerCase();
@@ -433,7 +439,18 @@ async function tryExecuteDynamicPrefixCommand(message, command, args) {
     await refreshDynamicCommands(false);
     if (!DYNAMIC_COMMANDS_ALLOW_OVERRIDE && RESERVED_PREFIX_COMMANDS.has(String(command).toLowerCase())) return false;
 
-    const entry = dynamicCommandsState.byTrigger.get(String(command).toLowerCase());
+    const key = String(command).toLowerCase();
+    let entry = dynamicCommandsState.byTrigger.get(key);
+    if (!entry) {
+      const now = Date.now();
+      // If a new command was just created in the panel, do one forced refresh
+      // so users don't need to wait for the normal polling interval.
+      if ((now - Number(dynamicCommandsState.lastMissSyncAt || 0)) > 4000) {
+        dynamicCommandsState.lastMissSyncAt = now;
+        await refreshDynamicCommands(true);
+        entry = dynamicCommandsState.byTrigger.get(key);
+      }
+    }
     if (!entry) return false;
 
     const rendered = renderDynamicCommandTemplate(entry.response, {
@@ -461,6 +478,54 @@ async function tryExecuteDynamicPrefixCommand(message, command, args) {
     return true;
   } catch (e) {
     return false;
+  }
+}
+
+function startDynamicCommandsWebhookServer() {
+  try {
+    if (!DYNAMIC_COMMANDS_WEBHOOK_PORT || DYNAMIC_COMMANDS_WEBHOOK_PORT < 1) return;
+    if (!DYNAMIC_COMMANDS_WEBHOOK_KEY) {
+      console.warn('dynamic commands webhook disabled: DYNAMIC_COMMANDS_WEBHOOK_KEY missing');
+      return;
+    }
+    if (dynamicCommandsWebhookServer) return;
+
+    dynamicCommandsWebhookServer = http.createServer(async (req, res) => {
+      try {
+        const url = String(req.url || '').split('?')[0];
+        if (req.method !== 'POST' || url !== '/internal/dynamic-commands/refresh') {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Not found' }));
+          return;
+        }
+
+        const providedKey = String(req.headers['x-refresh-key'] || '').trim();
+        if (!providedKey || providedKey !== DYNAMIC_COMMANDS_WEBHOOK_KEY) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ ok: false, error: 'Unauthorized' }));
+          return;
+        }
+
+        await refreshDynamicCommands(true);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          ok: true,
+          source: dynamicCommandsState.source,
+          count: dynamicCommandsState.byTrigger.size,
+          lastSyncAt: dynamicCommandsState.lastSyncAt,
+          error: dynamicCommandsState.lastError || null,
+        }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: false, error: String(e && e.message ? e.message : e) }));
+      }
+    });
+
+    dynamicCommandsWebhookServer.listen(DYNAMIC_COMMANDS_WEBHOOK_PORT, DYNAMIC_COMMANDS_WEBHOOK_HOST, () => {
+      console.log(`dynamic commands webhook listening on ${DYNAMIC_COMMANDS_WEBHOOK_HOST}:${DYNAMIC_COMMANDS_WEBHOOK_PORT}`);
+    });
+  } catch (e) {
+    console.error('failed to start dynamic commands webhook server', e);
   }
 }
 
@@ -6533,6 +6598,7 @@ client.on('ready', () => {
       refreshDynamicCommands(false).catch(() => {});
     }, DYNAMIC_COMMANDS_REFRESH_MS);
   } catch (e) {}
+  try { startDynamicCommandsWebhookServer(); } catch (e) {}
 
   // Seed voice activity sessions for members already in voice.
   try { voiceActivity.seedFromClient(client); } catch (e) {}
