@@ -205,6 +205,7 @@ try {
 
 const DATA_DIR = __dirname;
 const MODLOGS_PATH = path.join(DATA_DIR, 'modlogs.json');
+const WICK_STATE_PATH = path.join(DATA_DIR, 'wick_state.json');
 const BLACKLIST_PATH = path.join(DATA_DIR, 'blacklist.json');
 const DESTAFFS_PATH = path.join(DATA_DIR, 'destaffs.json');
 const DESTAFF_LOG_CHANNEL_ID = process.env.DESTAFF_LOG_CHANNEL_ID || '1459166993381851247';
@@ -229,6 +230,9 @@ const DYNAMIC_COMMANDS_ALLOW_OVERRIDE = String(process.env.DYNAMIC_COMMANDS_ALLO
 const DYNAMIC_COMMANDS_WEBHOOK_PORT = Number(process.env.DYNAMIC_COMMANDS_WEBHOOK_PORT || 0);
 const DYNAMIC_COMMANDS_WEBHOOK_HOST = String(process.env.DYNAMIC_COMMANDS_WEBHOOK_HOST || '0.0.0.0').trim();
 const DYNAMIC_COMMANDS_WEBHOOK_KEY = String(process.env.DYNAMIC_COMMANDS_WEBHOOK_KEY || '').trim();
+const WICK_SETTINGS_URL = String(process.env.WICK_SETTINGS_URL || 'https://hanno-s-website.onrender.com/api/wick-settings').trim();
+const WICK_SETTINGS_BOT_KEY = String(process.env.WICK_SETTINGS_BOT_KEY || DYNAMIC_COMMANDS_BOT_KEY || '').trim();
+const WICK_SETTINGS_REFRESH_MS = Math.max(15_000, Number(process.env.WICK_SETTINGS_REFRESH_MS || 60_000));
 
 // Streams/watchers storage
 const STREAMS_PATH = path.join(DATA_DIR, 'streams.json');
@@ -320,13 +324,203 @@ function saveJson(p, obj) {
   }
 }
 
+function loadWickState() {
+  const state = loadJson(WICK_STATE_PATH, { guilds: {} });
+  if (!state || typeof state !== 'object') return { guilds: {} };
+  if (!state.guilds || typeof state.guilds !== 'object') state.guilds = {};
+  return state;
+}
+
+function saveWickState(state) {
+  const safe = state && typeof state === 'object' ? state : { guilds: {} };
+  if (!safe.guilds || typeof safe.guilds !== 'object') safe.guilds = {};
+  return saveJson(WICK_STATE_PATH, safe);
+}
+
+function getWickGuildState(state, guildId, createIfMissing = true) {
+  const gid = String(guildId || '');
+  if (!gid) return null;
+  if (!state.guilds[gid] && createIfMissing) {
+    state.guilds[gid] = {
+      enabled: true,
+      logChannelId: null,
+      strikes: {},
+      settings: {
+        autoStrikeOnWarn: true,
+        timeoutAt3: 30,
+        timeoutAt5: 1440,
+      },
+      updatedAt: Date.now(),
+    };
+  }
+  const g = state.guilds[gid] || null;
+  if (!g) return null;
+  if (typeof g.enabled !== 'boolean') g.enabled = true;
+  if (!g.strikes || typeof g.strikes !== 'object') g.strikes = {};
+  if (!g.settings || typeof g.settings !== 'object') g.settings = {};
+  if (typeof g.settings.autoStrikeOnWarn !== 'boolean') g.settings.autoStrikeOnWarn = true;
+  if (!Number.isFinite(Number(g.settings.timeoutAt3))) g.settings.timeoutAt3 = 30;
+  if (!Number.isFinite(Number(g.settings.timeoutAt5))) g.settings.timeoutAt5 = 1440;
+
+  // Web-admin managed Wick settings (if available) override local runtime policy.
+  try {
+    const remote = wickRemoteState.byGuild.get(gid);
+    if (remote && typeof remote === 'object') {
+      if (typeof remote.enabled === 'boolean') g.enabled = remote.enabled;
+      if (typeof remote.logChannelId === 'string' && remote.logChannelId.trim()) g.logChannelId = String(remote.logChannelId).trim();
+      if (typeof remote.autoStrikeOnWarn === 'boolean') g.settings.autoStrikeOnWarn = remote.autoStrikeOnWarn;
+      if (Number.isFinite(Number(remote.timeoutAt3))) g.settings.timeoutAt3 = Math.max(0, Number(remote.timeoutAt3));
+      if (Number.isFinite(Number(remote.timeoutAt5))) g.settings.timeoutAt5 = Math.max(0, Number(remote.timeoutAt5));
+    }
+  } catch (e) {}
+
+  return g;
+}
+
+function normalizeRemoteWickGuildConfig(input) {
+  const cfg = input && typeof input === 'object' ? input : {};
+  return {
+    enabled: cfg.enabled !== false,
+    logChannelId: String(cfg.logChannelId || '').trim() || null,
+    autoStrikeOnWarn: cfg.autoStrikeOnWarn !== false,
+    timeoutAt3: Math.max(0, Number(cfg.timeoutAt3 || 30) || 30),
+    timeoutAt5: Math.max(0, Number(cfg.timeoutAt5 || 1440) || 1440),
+    antiRaid: {
+      enabled: cfg.antiRaid && cfg.antiRaid.enabled !== false,
+      joins: Math.max(2, Number(cfg.antiRaid && cfg.antiRaid.joins || 8) || 8),
+      seconds: Math.max(5, Number(cfg.antiRaid && cfg.antiRaid.seconds || 20) || 20),
+      slowmodeSeconds: Math.max(0, Number(cfg.antiRaid && cfg.antiRaid.slowmodeSeconds || 15) || 15),
+    },
+    antiNuke: {
+      enabled: cfg.antiNuke && cfg.antiNuke.enabled !== false,
+      maxChannelDeletePerMinute: Math.max(1, Number(cfg.antiNuke && cfg.antiNuke.maxChannelDeletePerMinute || 4) || 4),
+      maxRoleDeletePerMinute: Math.max(1, Number(cfg.antiNuke && cfg.antiNuke.maxRoleDeletePerMinute || 3) || 3),
+      lockdownMinutes: Math.max(1, Number(cfg.antiNuke && cfg.antiNuke.lockdownMinutes || 10) || 10),
+    },
+    linkShield: {
+      enabled: cfg.linkShield && cfg.linkShield.enabled === true,
+      blockDiscordInvites: !(cfg.linkShield && cfg.linkShield.blockDiscordInvites === false),
+      whitelistDomains: Array.isArray(cfg.linkShield && cfg.linkShield.whitelistDomains)
+        ? cfg.linkShield.whitelistDomains.map((d) => String(d || '').trim().toLowerCase()).filter(Boolean)
+        : [],
+    },
+  };
+}
+
+async function refreshWickSettings(force = false) {
+  try {
+    const now = Date.now();
+    if (!WICK_SETTINGS_URL) return;
+    if (!force && (now - Number(wickRemoteState.lastSyncAt || 0)) < WICK_SETTINGS_REFRESH_MS) return;
+
+    const headers = {};
+    if (WICK_SETTINGS_BOT_KEY) headers['x-bot-key'] = WICK_SETTINGS_BOT_KEY;
+    const response = await fetch(WICK_SETTINGS_URL, {
+      method: 'GET',
+      headers,
+      signal: AbortSignal.timeout(9000),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const payload = await response.json().catch(() => ({}));
+    const guilds = payload && payload.settings && payload.settings.guilds && typeof payload.settings.guilds === 'object'
+      ? payload.settings.guilds
+      : {};
+
+    const next = new Map();
+    for (const [guildIdRaw, cfg] of Object.entries(guilds)) {
+      const gid = String(guildIdRaw || '').trim();
+      if (!/^\d{5,30}$/.test(gid)) continue;
+      next.set(gid, normalizeRemoteWickGuildConfig(cfg));
+    }
+
+    wickRemoteState.byGuild = next;
+    wickRemoteState.lastSyncAt = Date.now();
+    wickRemoteState.lastError = null;
+    wickRemoteState.source = payload && payload.authMode ? String(payload.authMode) : 'remote';
+  } catch (e) {
+    wickRemoteState.lastError = String(e && e.message ? e.message : e);
+  }
+}
+
+function pruneExpiredStrikes(strikeList) {
+  const now = Date.now();
+  const list = Array.isArray(strikeList) ? strikeList : [];
+  return list.filter((s) => {
+    if (!s || typeof s !== 'object') return false;
+    if (!s.expiresAt) return true;
+    return Number(s.expiresAt) > now;
+  });
+}
+
+function getUserStrikes(guildState, userId) {
+  if (!guildState || !guildState.strikes) return [];
+  const uid = String(userId || '');
+  const existing = Array.isArray(guildState.strikes[uid]) ? guildState.strikes[uid] : [];
+  const pruned = pruneExpiredStrikes(existing);
+  if (pruned.length !== existing.length) guildState.strikes[uid] = pruned;
+  return pruned;
+}
+
+function addUserStrike(guildState, userId, entry) {
+  const uid = String(userId || '');
+  if (!uid) return 0;
+  const current = getUserStrikes(guildState, uid);
+  current.push({
+    id: `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    at: Date.now(),
+    reason: String(entry && entry.reason ? entry.reason : 'No reason provided').slice(0, 300),
+    moderatorId: entry && entry.moderatorId ? String(entry.moderatorId) : null,
+    caseId: Number.isFinite(Number(entry && entry.caseId)) ? Number(entry.caseId) : null,
+    source: String(entry && entry.source ? entry.source : 'manual').slice(0, 40),
+    expiresAt: Number.isFinite(Number(entry && entry.expiresAt)) ? Number(entry.expiresAt) : null,
+  });
+  guildState.strikes[uid] = current;
+  guildState.updatedAt = Date.now();
+  return current.length;
+}
+
+function removeUserStrikes(guildState, userId, count) {
+  const uid = String(userId || '');
+  if (!uid) return 0;
+  const current = getUserStrikes(guildState, uid);
+  const amount = Math.max(1, Math.min(current.length, Number(count) || 1));
+  if (!current.length) return 0;
+  current.splice(Math.max(0, current.length - amount), amount);
+  guildState.strikes[uid] = current;
+  guildState.updatedAt = Date.now();
+  return amount;
+}
+
+function clearUserStrikes(guildState, userId) {
+  const uid = String(userId || '');
+  if (!uid) return 0;
+  const current = getUserStrikes(guildState, uid);
+  const removed = current.length;
+  guildState.strikes[uid] = [];
+  guildState.updatedAt = Date.now();
+  return removed;
+}
+
+function resolveLogChannelForWick(guild, guildState) {
+  try {
+    const id = guildState && guildState.logChannelId ? String(guildState.logChannelId) : '';
+    if (id && guild && guild.channels && guild.channels.cache) {
+      const byId = guild.channels.cache.get(id);
+      if (byId && typeof byId.send === 'function') return byId;
+    }
+  } catch (e) {}
+  return null;
+}
+
 const RESERVED_PREFIX_COMMANDS = new Set([
   'help','h','allban','rebanall','reban','clearmodlogs','membercount','mc','invite','rules','8ball','flip',
   'dice','roll','wheel','wheelhelp','wheelinfo','spins','admin','clearracism','purgeracist','cleartoxic','purgehate',
   'sa','sb','shelp','beta','alpha','rate','joke','compliment','md','modlogs','mds','say','close','case','cases',
   'warn','ban','bancm','kick','unban','sgrief','softgrief','miss','lmiss','mute','unmute','santa','gift','snow',
   'advent','join','play','pause','resume','stop','queue','leave','music','del','delete','role','setautorole','autorole',
-  'reason','duration','dcase','stream','streams','watch','ticket','dp','db','uploads','env','session','create'
+  'reason','duration','dcase','stream','streams','watch','ticket','dp','db','uploads','env','session','create',
+  'wick','strike','strikes','unstrike','clearstrikes'
 ]);
 
 const dynamicCommandsState = {
@@ -336,8 +530,15 @@ const dynamicCommandsState = {
   lastError: null,
   source: 'none',
 };
+const wickRemoteState = {
+  byGuild: new Map(),
+  lastSyncAt: 0,
+  lastError: null,
+  source: 'none',
+};
 let dynamicCommandsRefreshTimer = null;
 let dynamicCommandsWebhookServer = null;
+let wickSettingsRefreshTimer = null;
 
 function normalizeDynamicCommandEntry(entry) {
   const trigger = String(entry && entry.trigger ? entry.trigger : '').trim().toLowerCase();
@@ -6736,11 +6937,18 @@ client.on('ready', () => {
   try { initPreRegPanelStates(); } catch (e) {}
   try { initTempBanScheduler(); } catch (e) {}
   try { refreshDynamicCommands(true).catch(() => {}); } catch (e) {}
+  try { refreshWickSettings(true).catch(() => {}); } catch (e) {}
   try {
     if (dynamicCommandsRefreshTimer) clearInterval(dynamicCommandsRefreshTimer);
     dynamicCommandsRefreshTimer = setInterval(() => {
       refreshDynamicCommands(false).catch(() => {});
     }, DYNAMIC_COMMANDS_REFRESH_MS);
+  } catch (e) {}
+  try {
+    if (wickSettingsRefreshTimer) clearInterval(wickSettingsRefreshTimer);
+    wickSettingsRefreshTimer = setInterval(() => {
+      refreshWickSettings(false).catch(() => {});
+    }, WICK_SETTINGS_REFRESH_MS);
   } catch (e) {}
   try { startDynamicCommandsWebhookServer(); } catch (e) {}
 
@@ -9640,6 +9848,11 @@ client.on('messageCreate', async (message) => {
     duration: '*duration <caseId> <duration> (e.g. 3d, 2h30m, 15m)',
     dcase: '*dcase <caseId>',
     stream: '*stream add <streamer_login> [#channel] | *stream remove <streamer_login>',
+    wick: '*wick status | *wick setlog <#channel|id>',
+    strike: '*strike <user> [reason]',
+    strikes: '*strikes <user>',
+    unstrike: '*unstrike <user> [count]',
+    clearstrikes: '*clearstrikes <user>',
   };
   if (usageByCommand[command] && args.length === 0) {
     return replyAsEmbed(message, `Usage: ${usageByCommand[command]}`);
@@ -9771,6 +9984,140 @@ client.on('messageCreate', async (message) => {
     return message.channel.send({ embeds: [embed] });
   }
 
+  if (command === 'wick') {
+    if (!hasStaffCommandAccess(message)) return;
+    const sub = String(args[0] || 'help').toLowerCase();
+    const state = loadWickState();
+    const guildState = getWickGuildState(state, message.guild?.id, true);
+
+    if (!guildState) return replyAsEmbed(message, 'This command can only be used in a server.');
+
+    if (sub === 'setlog') {
+      if (!hasAdminCommandAccess(message)) return;
+      const targetArg = String(args[1] || '').trim();
+      const channelId = parseId(targetArg) || targetArg.replace(/[<#>]/g, '');
+      const channel = channelId ? message.guild.channels.cache.get(channelId) : null;
+      if (!channel || typeof channel.send !== 'function') return replyAsEmbed(message, 'Usage: *wick setlog <#channel|channelId>');
+      guildState.logChannelId = String(channel.id);
+      guildState.updatedAt = Date.now();
+      saveWickState(state);
+      return replyAsEmbed(message, `Wick log channel set to <#${channel.id}>.`);
+    }
+
+    if (sub === 'status') {
+      const strikeUsers = Object.keys(guildState.strikes || {});
+      let totalStrikes = 0;
+      for (const uid of strikeUsers) totalStrikes += getUserStrikes(guildState, uid).length;
+      saveWickState(state);
+      const e = new EmbedBuilder()
+        .setTitle('Wick Security Status')
+        .setColor(0x87CEFA)
+        .setDescription('Wick-style moderation core is active on this guild.')
+        .addFields(
+          { name: 'Wick Enabled', value: guildState.enabled === false ? 'Disabled' : 'Enabled', inline: true },
+          { name: 'Strike Users', value: String(strikeUsers.length), inline: true },
+          { name: 'Total Strikes', value: String(totalStrikes), inline: true },
+          { name: 'Auto-Strike on Warn', value: guildState.settings.autoStrikeOnWarn ? 'Enabled' : 'Disabled', inline: true },
+          { name: 'Escalation', value: `3 strikes -> ${guildState.settings.timeoutAt3}m timeout\n5 strikes -> ${guildState.settings.timeoutAt5}m timeout`, inline: false },
+          { name: 'Log Channel', value: guildState.logChannelId ? `<#${guildState.logChannelId}>` : 'Not set', inline: false },
+          { name: 'Web Sync', value: wickRemoteState.lastSyncAt ? `OK (${new Date(wickRemoteState.lastSyncAt).toISOString()})` : 'Not synced yet', inline: false },
+          { name: 'Web Sync Error', value: wickRemoteState.lastError || 'none', inline: false },
+        )
+        .setTimestamp();
+      return message.channel.send({ embeds: [e] });
+    }
+
+    return replyAsEmbed(
+      message,
+      'Wick Commands:\n*wick status\n*wick setlog <#channel|id>\n*strike <user> [reason]\n*strikes <user>\n*unstrike <user> [count]\n*clearstrikes <user>'
+    );
+  }
+
+  if (command === 'strike') {
+    if (!hasStaffCommandAccess(message)) return;
+    const targetArg = args[0];
+    const reason = args.slice(1).join(' ').trim() || 'Manual strike';
+    const targetUser = await resolveUser(targetArg);
+    if (!targetUser) return replyAsEmbed(message, 'Usage: *strike <user> [reason]');
+
+    const state = loadWickState();
+    const guildState = getWickGuildState(state, message.guild?.id, true);
+    const count = addUserStrike(guildState, targetUser.id, {
+      reason,
+      moderatorId: message.author.id,
+      source: 'manual',
+    });
+    saveWickState(state);
+
+    const logCh = resolveLogChannelForWick(message.guild, guildState);
+    if (logCh) {
+      const logEmbed = new EmbedBuilder()
+        .setTitle('Wick Strike Added')
+        .setColor(0xF1C40F)
+        .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${count}`)
+        .setTimestamp();
+      await logCh.send({ embeds: [logEmbed], allowedMentions: { parse: [] } }).catch(() => {});
+    }
+    return replyAsEmbed(message, `${targetUser.tag} now has ${count} strike(s).`);
+  }
+
+  if (command === 'strikes') {
+    if (!hasStaffCommandAccess(message)) return;
+    const targetArg = args[0];
+    const targetUser = await resolveUser(targetArg);
+    if (!targetUser) return replyAsEmbed(message, 'Usage: *strikes <user>');
+
+    const state = loadWickState();
+    const guildState = getWickGuildState(state, message.guild?.id, true);
+    const list = getUserStrikes(guildState, targetUser.id);
+    saveWickState(state);
+
+    if (!list.length) return replyAsEmbed(message, `${targetUser.tag} has 0 strikes.`);
+
+    const preview = list.slice(-10).map((s, i) => {
+      const whenTs = Math.floor(Number(s.at || Date.now()) / 1000);
+      const by = s.moderatorId ? `<@${s.moderatorId}>` : 'n/a';
+      return `${i + 1}. <t:${whenTs}:f> by ${by} - ${String(s.reason || '').slice(0, 120)}`;
+    }).join('\n');
+
+    const embed = new EmbedBuilder()
+      .setTitle(`Strikes - ${targetUser.tag}`)
+      .setColor(0xE67E22)
+      .setDescription(preview.slice(0, 3800))
+      .setFooter({ text: `Total strikes: ${list.length}` })
+      .setTimestamp();
+
+    return message.channel.send({ embeds: [embed] });
+  }
+
+  if (command === 'unstrike') {
+    if (!hasStaffCommandAccess(message)) return;
+    const targetArg = args[0];
+    const count = Math.max(1, Math.min(20, Number(args[1]) || 1));
+    const targetUser = await resolveUser(targetArg);
+    if (!targetUser) return replyAsEmbed(message, 'Usage: *unstrike <user> [count]');
+
+    const state = loadWickState();
+    const guildState = getWickGuildState(state, message.guild?.id, true);
+    const removed = removeUserStrikes(guildState, targetUser.id, count);
+    const left = getUserStrikes(guildState, targetUser.id).length;
+    saveWickState(state);
+    return replyAsEmbed(message, `Removed ${removed} strike(s) from ${targetUser.tag}. Remaining: ${left}.`);
+  }
+
+  if (command === 'clearstrikes') {
+    if (!hasAdminCommandAccess(message)) return;
+    const targetArg = args[0];
+    const targetUser = await resolveUser(targetArg);
+    if (!targetUser) return replyAsEmbed(message, 'Usage: *clearstrikes <user>');
+
+    const state = loadWickState();
+    const guildState = getWickGuildState(state, message.guild?.id, true);
+    const removed = clearUserStrikes(guildState, targetUser.id);
+    saveWickState(state);
+    return replyAsEmbed(message, `Cleared ${removed} strike(s) for ${targetUser.tag}.`);
+  }
+
   // Intentionally do not log every command execution (e.g. !say).
   // Moderation commands create their own dedicated moderation logs.
 
@@ -9788,6 +10135,7 @@ client.on('messageCreate', async (message) => {
       { name: '📅 Sessions', value: '`*sa <reg> <game> [mode]` — Session announce\n`*sb <reg> <game>` — Beta announce\n`*shelp` — Session help\n`*create <announcement>` — Import announcement\n`*session help|list|cancel|testpost`', inline: false },
       { name: '🎧 Voice', value: '`*va [1d|7d|30d]` — Voice activity\n`/voiceactivity` — Slash version', inline: false },
       { name: '⚖️ Moderation', value: '`*warn <user> [reason]` — Staff\n`*ban <user> [reason]` — Head Staff\n`*unban <id>` — Staff\n`*mute <user> <minutes>` — Staff\n`*unmute <user>` — Staff\n`*role <user> <role>` — Admin\n`*admin` — Overview', inline: false },
+      { name: '🛡️ Wick Core', value: '`*wick status` — Security status\n`*wick setlog <#channel>` — Set Wick log channel (Admin)\n`*strike <user> [reason]` — Add strike\n`*strikes <user>` — Show strikes\n`*unstrike <user> [count]` — Remove strikes\n`*clearstrikes <user>` — Clear all strikes (Admin)', inline: false },
       { name: '📊 Logs & History', value: '`*md <user> [page]` — Modlogs\n`*moderations <userId>`\n`*case <caseId>`', inline: false },
       { name: '✏️ Modlog Editing', value: '`*reason <caseId> <text>` — Staff\n`*duration <caseId> <time>` — Staff\n`*dcase <caseId>` — Admin (Delete case)', inline: false },
       { name: '🗑️ Cleanup', value: '`-purg <count> [user]` — Purge (Admin only)\n`*del <channel>` — Delete channel (Admin only)', inline: false },
@@ -10580,6 +10928,43 @@ client.on('messageCreate', async (message) => {
 
     // DM the user
     await sendModEmbedToUser(targetUser, 'Warn', { guild: message.guild, moderatorTag: message.author.tag, reason, caseId });
+
+    // Wick-style strike automation + escalation
+    try {
+      const wickState = loadWickState();
+      const wickGuild = getWickGuildState(wickState, message.guild?.id, true);
+      if (wickGuild && wickGuild.enabled !== false && wickGuild.settings && wickGuild.settings.autoStrikeOnWarn) {
+        const strikeCount = addUserStrike(wickGuild, targetUser.id, {
+          reason,
+          moderatorId: message.author.id,
+          caseId,
+          source: 'warn',
+        });
+
+        const member = message.guild ? await message.guild.members.fetch(targetUser.id).catch(() => null) : null;
+        if (member && member.moderatable) {
+          const timeout3Ms = Number(wickGuild.settings.timeoutAt3 || 0) * 60 * 1000;
+          const timeout5Ms = Number(wickGuild.settings.timeoutAt5 || 0) * 60 * 1000;
+          if (strikeCount >= 5 && timeout5Ms > 0) {
+            await member.timeout(timeout5Ms, `Wick escalation: ${strikeCount} strikes`).catch(() => {});
+          } else if (strikeCount >= 3 && timeout3Ms > 0) {
+            await member.timeout(timeout3Ms, `Wick escalation: ${strikeCount} strikes`).catch(() => {});
+          }
+        }
+
+        const logCh = resolveLogChannelForWick(message.guild, wickGuild);
+        if (logCh) {
+          const e = new EmbedBuilder()
+            .setTitle('Wick Auto-Strike')
+            .setColor(0xF39C12)
+            .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${strikeCount}`)
+            .setTimestamp();
+          await logCh.send({ embeds: [e], allowedMentions: { parse: [] } }).catch(() => {});
+        }
+
+        saveWickState(wickState);
+      }
+    } catch (e) {}
 
     try {
       const nowTs = Math.floor(Date.now() / 1000);
