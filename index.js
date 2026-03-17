@@ -233,6 +233,7 @@ const DYNAMIC_COMMANDS_WEBHOOK_KEY = String(process.env.DYNAMIC_COMMANDS_WEBHOOK
 const WICK_SETTINGS_URL = String(process.env.WICK_SETTINGS_URL || 'https://hanno-s-website.onrender.com/api/wick-settings').trim();
 const WICK_SETTINGS_BOT_KEY = String(process.env.WICK_SETTINGS_BOT_KEY || DYNAMIC_COMMANDS_BOT_KEY || '').trim();
 const WICK_SETTINGS_REFRESH_MS = Math.max(15_000, Number(process.env.WICK_SETTINGS_REFRESH_MS || 60_000));
+const WICK_VIOLATION_ROLE_ID = String(process.env.WICK_VIOLATION_ROLE_ID || '1483185770792489192').trim();
 
 // Streams/watchers storage
 const STREAMS_PATH = path.join(DATA_DIR, 'streams.json');
@@ -511,6 +512,22 @@ function resolveLogChannelForWick(guild, guildState) {
     }
   } catch (e) {}
   return null;
+}
+
+async function applyWickViolationRole(member, reason = 'Wick violation') {
+  try {
+    if (!member || !member.guild || !WICK_VIOLATION_ROLE_ID) return { attempted: false, ok: false, reason: 'member_or_role_missing' };
+    if (member.roles?.cache?.has?.(WICK_VIOLATION_ROLE_ID)) return { attempted: false, ok: true, reason: 'already_has_role' };
+
+    const role = member.guild.roles.cache.get(WICK_VIOLATION_ROLE_ID)
+      || await member.guild.roles.fetch(WICK_VIOLATION_ROLE_ID).catch(() => null);
+    if (!role) return { attempted: true, ok: false, reason: 'role_not_found' };
+
+    await member.roles.add(role, reason);
+    return { attempted: true, ok: true, reason: 'role_added' };
+  } catch (e) {
+    return { attempted: true, ok: false, reason: String(e && e.message ? e.message : e) };
+  }
 }
 
 const RESERVED_PREFIX_COMMANDS = new Set([
@@ -3583,8 +3600,8 @@ client.on('messageCreate', async (message) => {
     // Fetch member info (we will enforce automod for all non-bot users)
     const member = await message.guild.members.fetch(message.author.id).catch(()=>null);
 
-    // Invite-link automod is intentionally disabled: do not delete/timeout just for links.
-    const hasInvite = false;
+    const hasInvite = !!(AUTOMOD_CONFIG && AUTOMOD_CONFIG.blockInviteLinks)
+      && /(discord(?:\.gg|app\.com\/invite)\/[A-Za-z0-9-]+)/i.test(text);
 
     // Detect racist/blocked terms (configurable via AUTOMOD_CONFIG.blockedWords)
     const blocked = (AUTOMOD_CONFIG && Array.isArray(AUTOMOD_CONFIG.blockedWords))
@@ -3620,6 +3637,9 @@ client.on('messageCreate', async (message) => {
     if (hasInvite) reasonParts.push('Invite link');
     if (hasRacist) reasonParts.push(`Racist content${matchedWords.length ? ` (${matchedWords.length})` : ''}`);
 
+    const quarantineResult = await applyWickViolationRole(member, `Wick automod: ${reasonParts.join(' + ') || 'violation'}`)
+      .catch(() => ({ ok: false, reason: 'role_apply_failed' }));
+
     // Attempt to timeout (mute) the member for configured minutes (default 2) if bot has permission
     let muted = false;
     let muteError = null;
@@ -3642,10 +3662,10 @@ client.on('messageCreate', async (message) => {
     // Mirror automod enforcement to modlogs.json + actions.md (unified case format)
     try {
       const mdReason = reasonParts.length ? reasonParts.join(' + ') : 'No reason provided';
-      if (deleted || muted) {
+      if (deleted || muted || quarantineResult.ok) {
         const chName = message.channel && message.channel.name ? `#${message.channel.name}` : null;
         const preview = text.substring(0, 200).replace(/\s+/g, ' ').trim();
-        const type = muted ? 'AutoMute' : 'AutoModDelete';
+        const type = muted ? 'AutoMute' : (deleted ? 'AutoModDelete' : 'AutoQuarantine');
         const durationMs = muted ? (muteMinutes * 60 * 1000) : undefined;
 
         createModlogCase({
@@ -3661,6 +3681,7 @@ client.on('messageCreate', async (message) => {
             messageId: message.id ? String(message.id) : null,
             deleted: !!deleted,
             timedOut: !!muted,
+            quarantined: !!quarantineResult.ok,
             preview: preview || null,
           }
         });
@@ -3696,7 +3717,7 @@ client.on('messageCreate', async (message) => {
       console.log('[automod] detected; deleted:', deleted, 'muted:', muted, 'will log to', logCh ? `${logCh.guild ? logCh.guild.id : 'unknown'}/${logCh.id}` : 'none');
       // add deletion status and timeout info to embed
       try {
-        embed.addFields({ name: 'Action', value: `Deleted: ${deleted ? 'Yes' : 'No (missing permission)'}\nTimeout: ${muted ? `Yes — ${muteMinutes} minutes` : `No${muteError ? ` — Error: ${muteError}` : ' (missing permission)'}`}`, inline: false });
+        embed.addFields({ name: 'Action', value: `Deleted: ${deleted ? 'Yes' : 'No (missing permission)'}\nTimeout: ${muted ? `Yes — ${muteMinutes} minutes` : `No${muteError ? ` — Error: ${muteError}` : ' (missing permission)'}`}\nQuarantine Role: ${quarantineResult.ok ? `Yes (${WICK_VIOLATION_ROLE_ID})` : `No${quarantineResult.reason ? ` — ${quarantineResult.reason}` : ''}`}`, inline: false });
       } catch (e) {}
       if (logCh && typeof logCh.send === 'function') await logCh.send({ embeds: [embed], allowedMentions: { parse: [] } }).catch((err) => { console.error('automod send failed', err); });
     } catch (e) { console.error('automod log failed', e); }
@@ -8797,12 +8818,12 @@ client.on('messageCreate', async (message) => {
         // Explicitly disabled: do nothing here.
         // (Racist-content deletion is handled in the central automod handler.)
       } else {
-        const isExempt = message.member.permissions.has(PermissionsBitField.Flags.ManageGuild) || message.member.permissions.has(PermissionsBitField.Flags.ManageMessages) || message.member.permissions.has(PermissionsBitField.Flags.ManageChannels) || message.member.permissions.has(PermissionsBitField.Flags.ManageRoles);
         const hasBlocked = cfg.blockedRoles && cfg.blockedRoles.length && message.member.roles.cache.some(r => cfg.blockedRoles.includes(r.name));
         const hasAllowed = cfg.allowedRoles && cfg.allowedRoles.length && message.member.roles.cache.some(r => cfg.allowedRoles.includes(r.name));
-        if (hasBlocked && !hasAllowed && !isExempt && message.content) {
+        if (hasBlocked && !hasAllowed && message.content) {
           const inviteRe = /(discord(?:\.gg|app\.com\/invite)\/[A-Za-z0-9-]+)/i;
           if (inviteRe.test(message.content)) {
+            const quarantineResult = await applyWickViolationRole(message.member, 'Wick invite-link quarantine').catch(() => ({ ok: false }));
             try { await message.delete().catch(() => {}); } catch (e) {}
 
             const muteMs = Math.max(0, (cfg.muteMinutes || 2) * 60 * 1000);
@@ -8846,9 +8867,9 @@ client.on('messageCreate', async (message) => {
               const logChannel = message.guild.channels.cache.find(c => cfg.logChannelNames.includes(c.name));
               if (logChannel && logChannel.isText()) {
                 if (timedOut) {
-                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason}`, caseId)] }).catch(() => {});
+                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-muted <@${message.author.id}> for ${cfg.muteMinutes} minutes — Reason: ${reason} | Quarantine: ${quarantineResult.ok ? 'yes' : 'failed'}`, caseId)] }).catch(() => {});
                 } else {
-                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-deleted a message from <@${message.author.id}> — Reason: ${reason}`, caseId)] }).catch(() => {});
+                  await logChannel.send({ embeds: [createChannelConfirmEmbed(`Auto-deleted a message from <@${message.author.id}> — Reason: ${reason} | Quarantine: ${quarantineResult.ok ? 'yes' : 'failed'}`, caseId)] }).catch(() => {});
                 }
               }
             } catch (e) {}
@@ -10047,6 +10068,9 @@ client.on('messageCreate', async (message) => {
       moderatorId: message.author.id,
       source: 'manual',
     });
+
+    const targetMember = message.guild ? await message.guild.members.fetch(targetUser.id).catch(() => null) : null;
+    const violationRole = await applyWickViolationRole(targetMember, `Wick manual strike by ${message.author.tag}`);
     saveWickState(state);
 
     const logCh = resolveLogChannelForWick(message.guild, guildState);
@@ -10054,7 +10078,7 @@ client.on('messageCreate', async (message) => {
       const logEmbed = new EmbedBuilder()
         .setTitle('Wick Strike Added')
         .setColor(0xF1C40F)
-        .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${count}`)
+        .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${count}\nViolation Role: ${violationRole.ok ? 'applied/kept' : 'failed'}`)
         .setTimestamp();
       await logCh.send({ embeds: [logEmbed], allowedMentions: { parse: [] } }).catch(() => {});
     }
@@ -10942,6 +10966,7 @@ client.on('messageCreate', async (message) => {
         });
 
         const member = message.guild ? await message.guild.members.fetch(targetUser.id).catch(() => null) : null;
+        const violationRole = await applyWickViolationRole(member, `Wick auto-strike by ${message.author.tag}`);
         if (member && member.moderatable) {
           const timeout3Ms = Number(wickGuild.settings.timeoutAt3 || 0) * 60 * 1000;
           const timeout5Ms = Number(wickGuild.settings.timeoutAt5 || 0) * 60 * 1000;
@@ -10957,7 +10982,7 @@ client.on('messageCreate', async (message) => {
           const e = new EmbedBuilder()
             .setTitle('Wick Auto-Strike')
             .setColor(0xF39C12)
-            .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${strikeCount}`)
+            .setDescription(`User: <@${targetUser.id}>\nModerator: <@${message.author.id}>\nReason: ${reason}\nTotal Strikes: ${strikeCount}\nViolation Role: ${violationRole.ok ? 'applied/kept' : 'failed'}`)
             .setTimestamp();
           await logCh.send({ embeds: [e], allowedMentions: { parse: [] } }).catch(() => {});
         }
