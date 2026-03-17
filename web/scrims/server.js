@@ -7,6 +7,7 @@ const port = Number(process.env.PORT || 4173);
 const base = __dirname;
 const projectRoot = path.resolve(__dirname, '..', '..');
 const DROP_MAP_STATE_PATH = path.join(projectRoot, 'dropmap_web_marks.json');
+const CREATE_HISTORY_PATH = path.join(projectRoot, 'scrims_create_history.json');
 const DISCORD_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '').trim();
 const DISCORD_CLIENT_SECRET = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
 const DISCORD_REDIRECT_URI = String(process.env.DISCORD_REDIRECT_URI || `http://localhost:${port}/auth/discord/callback`).trim();
@@ -100,6 +101,15 @@ function saveJson(filePath, data) {
   } catch (e) {
     return false;
   }
+}
+
+function appendCreateHistory(entry) {
+  const maxEntries = 2000;
+  const state = loadJson(CREATE_HISTORY_PATH, { entries: [] });
+  const entries = Array.isArray(state && state.entries) ? state.entries : [];
+  entries.push({ at: new Date().toISOString(), ...entry });
+  if (entries.length > maxEntries) entries.splice(0, entries.length - maxEntries);
+  return saveJson(CREATE_HISTORY_PATH, { entries });
 }
 
 function loadDropMapState() {
@@ -801,11 +811,26 @@ const server = http.createServer((req, res) => {
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', async () => {
       try {
+        const session = getSession(req);
+        if (!session) {
+          return sendJson(res, 401, { ok: false, error: 'Please connect your Discord account first.' });
+        }
         const raw = Buffer.concat(chunks).toString('utf8');
         const body = raw ? JSON.parse(raw) : {};
         const out = await handleCreateLobby(body);
+        appendCreateHistory({
+          ok: true,
+          userId: session.id,
+          username: session.username,
+          payload: body,
+          result: out,
+        });
         return sendJson(res, 200, out);
       } catch (e) {
+        appendCreateHistory({
+          ok: false,
+          reason: String(e && e.message ? e.message : e),
+        });
         return sendJson(res, 400, { ok: false, error: String(e && e.message ? e.message : e) });
       }
     });
