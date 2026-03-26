@@ -1,7 +1,22 @@
 services:
   - type: web
-    name: novaprac-scrims
-    runtime: static
-    buildCommand: ""
-    staticPublishPath: web/scrims
+    name: hanno-s-website
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run scrims:web
+    healthCheckPath: /api/health
     pullRequestPreviewsEnabled: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: STATIC_SITE_DIR
+        value: cf_pages_public
+      - key: DISCORD_CLIENT_ID
+        sync: false
+      - key: DISCORD_CLIENT_SECRET
+        sync: false
+      - key: DISCORD_REDIRECT_URI
+        sync: false
+      - key: SCRIMS_GUILD_ID
+        sync: false

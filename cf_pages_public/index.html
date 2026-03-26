@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Spielauswahl</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="home-shell">
+        <header class="home-topbar">
+          <p class="home-brand">Hanno Platform</p>
+          <nav class="home-links" aria-label="Schnellnavigation">
+            <a id="scrimsTopLink" class="home-link" href="/scrims">Scrims</a>
+            <a class="home-link home-link-primary" href="/quiz">Quiz-Duell</a>
+            <a id="clipTopLink" class="home-link" href="/clips">Clip Upload</a>
+            <a class="home-link" href="/hannos-ki">Hannos KI</a>
+            <a class="home-link" href="/admin">Admin</a>
+          </nav>
+        </header>
+
+        <section class="home-hero card active">
+          <p class="home-kicker">Compete at the highest level</p>
+          <h1 id="titleText">Spiel wählen</h1>
+          <p id="subtitleText" class="subtitle">Wähle deinen Modus</p>
+
+          <div class="home-stats" aria-label="Highlights">
+            <article>
+              <strong>Daily</strong>
+              <span>Sessions</span>
+            </article>
+            <article>
+              <strong>Live</strong>
+              <span>Community</span>
+            </article>
+            <article>
+              <strong>Smart</strong>
+              <span>Tools</span>
+            </article>
+          </div>
+
+          <div class="lang-row">
+            <label for="langSelect" id="langLabel">Sprache</label>
+            <select id="langSelect" aria-label="Sprache auswählen">
+              <option value="de">Deutsch</option>
+            </select>
+          </div>
+
+          <div class="stack home-stack">
+            <a id="scrimsLink" class="mode-link mode-link-scrims" href="/scrims">Scrims Creator</a>
+            <a id="impostorLink" class="mode-link" href="/impostor">Impostor Pro</a>
+            <a id="clipMainLink" class="mode-link" href="/clips">Clip Upload</a>
+            <a class="mode-link" href="/quiz">Quiz-Duell</a>
+            <a class="mode-link" href="/admin">Admin Dashboard</a>
+            <a class="mode-link" href="/hannos-ki">Hannos KI</a>
+          </div>
+        </section>
+
+        <section class="home-features" aria-label="Features">
+          <article class="home-feature-card">
+            <h2>Active Community</h2>
+            <p>Verbinde dich mit deinem Team, teile Strategien und baue bessere Sessions mit klaren Workflows.</p>
+          </article>
+          <article class="home-feature-card">
+            <h2>Session Tools</h2>
+            <p>Alles an einem Ort: Spielmodi, Quiz, KI-Unterstützung und Admin-Funktionen für den Alltag.</p>
+          </article>
+          <article class="home-feature-card">
+            <h2>Competitive Ready</h2>
+            <p>Professioneller Aufbau, schnelle Navigation und klare Oberfläche wie moderne Scrim-Plattformen.</p>
+          </article>
+        </section>
+      </section>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="pwa.js"></script>
+
+    <script>
+      const LANGUAGE_KEY = "app_lang_v1";
+      const translations = {
+        de: {
+          title: "Spiel wählen",
+          subtitle: "Wähle deinen Modus",
+          label: "Sprache",
+          impostor: "Impostor Pro",
+          scrims: "Scrims Creator"
+        }
+      };
+
+      const titleText = document.getElementById("titleText");
+      const subtitleText = document.getElementById("subtitleText");
+      const langLabel = document.getElementById("langLabel");
+      const langSelect = document.getElementById("langSelect");
+      const impostorLink = document.getElementById("impostorLink");
+      const scrimsLink = document.getElementById("scrimsLink");
+      const scrimsTopLink = document.getElementById("scrimsTopLink");
+      const clipTopLink = document.getElementById("clipTopLink");
+      const clipMainLink = document.getElementById("clipMainLink");
+      const scrimsUrl = String(window.SCRIMS_DASHBOARD_URL || "/scrims").trim() || "/scrims";
+
+      if (scrimsLink) scrimsLink.href = scrimsUrl;
+      if (scrimsTopLink) scrimsTopLink.href = scrimsUrl;
+
+      async function openClipAreaWithCode(event) {
+        event.preventDefault();
+        try {
+          const statusResponse = await fetch("/api/clips/auth-status");
+          const statusPayload = await statusResponse.json().catch(() => ({}));
+          if (statusResponse.ok && statusPayload && statusPayload.ok && statusPayload.authenticated === true) {
+            window.location.href = "/clips";
+            return;
+          }
+
+          const code = window.prompt("Clip access code:", "") || "";
+          if (!String(code).trim()) return;
+
+          const authResponse = await fetch("/api/clips/auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ code: String(code).trim() })
+          });
+          const authPayload = await authResponse.json().catch(() => ({}));
+          if (!authResponse.ok || !authPayload.ok) {
+            window.alert(authPayload.error || "Access denied.");
+            return;
+          }
+
+          window.location.href = "/clips";
+        } catch (error) {
+          window.alert("Could not open clip area right now.");
+        }
+      }
+
+      if (clipTopLink) clipTopLink.addEventListener("click", openClipAreaWithCode);
+      if (clipMainLink) clipMainLink.addEventListener("click", openClipAreaWithCode);
+
+      function getInitialLang() {
+        return "de";
+      }
+
+      function updateModeLinks(lang) {
+        impostorLink.href = new URL(`/impostor?lang=${encodeURIComponent(lang)}`, window.location.href).toString();
+      }
+
+      function applyLanguage(lang) {
+        const t = translations.de;
+        titleText.textContent = t.title;
+        subtitleText.textContent = t.subtitle;
+        langLabel.textContent = t.label;
+        impostorLink.textContent = t.impostor;
+        if (scrimsLink) scrimsLink.textContent = t.scrims;
+        document.documentElement.lang = lang;
+        langSelect.value = lang;
+        window.localStorage.setItem(LANGUAGE_KEY, lang);
+        updateModeLinks(lang);
+      }
+
+      langSelect.addEventListener("change", () => {
+        applyLanguage("de");
+      });
+
+      applyLanguage(getInitialLang());
+    </script>
+  </body>
+</html>

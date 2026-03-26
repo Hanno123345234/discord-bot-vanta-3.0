@@ -4,14 +4,23 @@ const path = require('path');
 const crypto = require('crypto');
 
 const port = Number(process.env.PORT || 4173);
-const base = __dirname;
 const projectRoot = path.resolve(__dirname, '..', '..');
+const configuredStaticDir = String(process.env.STATIC_SITE_DIR || '').trim();
+const preferredStaticBase = configuredStaticDir
+  ? path.resolve(projectRoot, configuredStaticDir)
+  : path.join(projectRoot, 'cf_pages_public');
+const base = fs.existsSync(preferredStaticBase) ? preferredStaticBase : __dirname;
 const DROP_MAP_STATE_PATH = path.join(projectRoot, 'dropmap_web_marks.json');
 const CREATE_HISTORY_PATH = path.join(projectRoot, 'scrims_create_history.json');
 const DISCORD_CLIENT_ID = String(process.env.DISCORD_CLIENT_ID || '').trim();
 const DISCORD_CLIENT_SECRET = String(process.env.DISCORD_CLIENT_SECRET || '').trim();
-const DISCORD_REDIRECT_URI = String(process.env.DISCORD_REDIRECT_URI || `http://localhost:${port}/auth/discord/callback`).trim();
 const FRONTEND_ORIGIN = String(process.env.FRONTEND_ORIGIN || '').trim();
+const PUBLIC_BASE_URL = String(
+  process.env.RENDER_EXTERNAL_URL ||
+  FRONTEND_ORIGIN ||
+  `http://localhost:${port}`
+).trim().replace(/\/+$/, '');
+const DISCORD_REDIRECT_URI = String(process.env.DISCORD_REDIRECT_URI || `${PUBLIC_BASE_URL}/auth/discord/callback`).trim();
 const CORS_ORIGINS = String(process.env.CORS_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
 if (FRONTEND_ORIGIN && !CORS_ORIGINS.includes(FRONTEND_ORIGIN)) CORS_ORIGINS.push(FRONTEND_ORIGIN);
 const CROSS_SITE_COOKIES = String(process.env.CROSS_SITE_COOKIES || '').trim() === '1';
@@ -49,6 +58,12 @@ function corsHeadersFor(req) {
 function sendRedirect(res, location, extraHeaders = {}) {
   res.writeHead(302, { Location: location, ...extraHeaders });
   res.end();
+}
+
+function dropmapRedirect(reason) {
+  const q = new URLSearchParams({ auth: 'failed' });
+  if (reason) q.set('reason', reason);
+  return `/dropmap.html?${q.toString()}`;
 }
 
 function nowMs() {
@@ -583,7 +598,7 @@ const server = http.createServer((req, res) => {
 
   if (req.method === 'GET' && reqPath === '/auth/discord') {
     if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) {
-      return sendJson(res, 500, { ok: false, error: 'Missing DISCORD_CLIENT_ID or DISCORD_CLIENT_SECRET in env.' });
+      return sendRedirect(res, dropmapRedirect('config'));
     }
     const oauthState = randomToken(18);
     webOAuthStates.set(oauthState, { expiresAt: nowMs() + OAUTH_STATE_MAX_AGE_MS });
@@ -616,10 +631,10 @@ const server = http.createServer((req, res) => {
     });
     if (!code || !state || !cookieState || state !== cookieState || !stateMeta || Number(stateMeta.expiresAt || 0) <= nowMs()) {
       if (state) webOAuthStates.delete(state);
-      return sendRedirect(res, '/dropmap.html?auth=failed', { 'Set-Cookie': clearStateCookie });
+      return sendRedirect(res, dropmapRedirect('state'), { 'Set-Cookie': clearStateCookie });
     }
     webOAuthStates.delete(state);
-    if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return sendRedirect(res, '/dropmap.html?auth=failed');
+    if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET) return sendRedirect(res, dropmapRedirect('config'));
 
     (async () => {
       try {
@@ -638,13 +653,13 @@ const server = http.createServer((req, res) => {
         });
         const tokenJson = await tokenRes.json().catch(() => ({}));
         const accessToken = String(tokenJson && tokenJson.access_token ? tokenJson.access_token : '');
-        if (!tokenRes.ok || !accessToken) return sendRedirect(res, '/dropmap.html?auth=failed');
+        if (!tokenRes.ok || !accessToken) return sendRedirect(res, dropmapRedirect('token'));
 
         const meRes = await fetch('https://discord.com/api/v10/users/@me', {
           headers: { Authorization: `Bearer ${accessToken}` },
         });
         const me = await meRes.json().catch(() => ({}));
-        if (!meRes.ok || !me || !me.id) return sendRedirect(res, '/dropmap.html?auth=failed');
+        if (!meRes.ok || !me || !me.id) return sendRedirect(res, dropmapRedirect('user'));
 
         const sid = randomToken(24);
         webSessions.set(sid, {
@@ -666,7 +681,7 @@ const server = http.createServer((req, res) => {
           'Set-Cookie': setCookies,
         });
       } catch (e) {
-        return sendRedirect(res, '/dropmap.html?auth=failed', { 'Set-Cookie': clearStateCookie });
+        return sendRedirect(res, dropmapRedirect('callback'), { 'Set-Cookie': clearStateCookie });
       }
     })();
     return;
@@ -806,7 +821,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && reqPath === '/api/create-lobby') {
+  if (req.method === 'POST' && (reqPath === '/api/create-lobby' || reqPath === '/api/scrims/create-lobby')) {
     const chunks = [];
     req.on('data', (chunk) => chunks.push(chunk));
     req.on('end', async () => {
@@ -837,7 +852,7 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'GET' && reqPath === '/api/health') {
+  if (req.method === 'GET' && (reqPath === '/api/health' || reqPath === '/api/scrims/health')) {
     return sendJson(res, 200, { ok: true });
   }
 

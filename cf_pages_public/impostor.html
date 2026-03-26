@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#ff3b47" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Impostor Pro</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="impostor-app">
+      <div id="impostorBanBanner" class="moderation-banner hidden"></div>
+
+      <section id="screenMain" class="impostor-screen active">
+        <header class="impostor-header">
+          <a href="./" class="impostor-back">←</a>
+          <div>
+            <h1>Impostor</h1>
+            <p>von Hanno</p>
+          </div>
+        </header>
+
+        <div class="impostor-card">
+          <button id="openPlayersBtn" class="impostor-row">
+            <span>☝️ Spieler</span>
+            <strong id="playerCountLabel">0</strong>
+          </button>
+          <button id="openImpostorsBtn" class="impostor-row">
+            <span>👻 Impostor</span>
+            <strong id="impostorCountLabel">1</strong>
+          </button>
+          <label class="impostor-row impostor-toggle-row">
+            <span>🔎 Hinweise für Impostor</span>
+            <input id="hintToggle" type="checkbox" checked />
+          </label>
+          <button id="openCategoriesBtn" class="impostor-row">
+            <span>🐼 Kategorien</span>
+            <strong id="categoryPreview">-</strong>
+          </button>
+        </div>
+
+        <div class="impostor-card">
+          <label class="impostor-row impostor-toggle-row">
+            <span>⏰ Zeitlimit</span>
+            <input id="timerToggle" type="checkbox" />
+          </label>
+        </div>
+
+        <p class="impostor-note">Legt die Spielregeln fest. Danach zieht jeder seine Karte – und das Misstrauen beginnt.</p>
+        <button id="startGameBtn" class="impostor-primary">Spiel starten</button>
+        <p id="mainError" class="error"></p>
+      </section>
+
+      <section id="screenPlayers" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Spieler</h2>
+        </header>
+        <div class="impostor-card">
+          <ul id="playerList" class="impostor-list"></ul>
+        </div>
+        <button id="addPlayerBtn" class="impostor-primary">＋ Spieler hinzufügen</button>
+      </section>
+
+      <section id="screenImpostors" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Impostor</h2>
+        </header>
+        <div id="impostorOptionList" class="impostor-card impostor-list"></div>
+        <p class="impostor-note">Entscheide, wie viele Impostor sich einschleichen sollen. Die erlaubte Anzahl hängt von der Gesamtzahl der Spieler ab.</p>
+      </section>
+
+      <section id="screenCategories" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Kategorien</h2>
+        </header>
+        <div id="selectedCategories" class="impostor-chip-row"></div>
+        <div id="categoryList" class="impostor-category-list"></div>
+        <div id="specyEditor" class="impostor-card">
+          <h3>spicy Wörter</h3>
+          <p class="impostor-note">Hier kannst du eigene Wörter für die Kategorie spicy eintragen.</p>
+          <div class="impostor-specy-row">
+            <input id="specyWordInput" type="text" maxlength="36" placeholder="Wort eingeben" autocomplete="off" />
+            <button id="addSpecyWordBtn" class="impostor-mini" type="button">＋</button>
+          </div>
+          <div id="specyWordList" class="impostor-chip-row"></div>
+        </div>
+      </section>
+
+      <section id="screenReveal" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Karte</h2>
+        </header>
+        <div class="impostor-reveal-card" id="revealCard">
+          <h3 id="revealPlayerName">Spieler</h3>
+          <p id="revealRoleLabel">Bereit?</p>
+          <p id="revealWord" class="hidden">Wort</p>
+          <button id="explainWordBtn" class="impostor-mini hidden" type="button">Begriff erklären</button>
+          <p id="explainWordText" class="impostor-note hidden"></p>
+          <button id="revealBtn" class="impostor-secondary">Karte aufdecken</button>
+        </div>
+        <button id="nextPlayerBtn" class="impostor-primary" disabled>Weitergeben</button>
+      </section>
+
+      <section id="screenDiscussion" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Impostor</h2>
+        </header>
+        <div class="impostor-card">
+          <h3 id="discussionTitle" class="impostor-center-title">Diskussion läuft!</h3>
+          <p class="impostor-center-text">Wenn ihr denkt, den Impostor gefunden zu haben, drückt auf den Button.</p>
+          <div class="impostor-person-mark">👤❓</div>
+          <button id="revealImpostorBtn" class="impostor-primary">Impostor aufdecken</button>
+          <p id="discussionTimerText" class="impostor-center-text"></p>
+        </div>
+      </section>
+
+      <section id="screenResult" class="impostor-screen">
+        <header class="impostor-subheader">
+          <button class="impostor-back-btn" data-back="main">←</button>
+          <h2>Impostor</h2>
+        </header>
+        <div class="impostor-card impostor-result-card">
+          <h3 id="resultTitle" class="impostor-center-title">Der Impostor ist ...</h3>
+          <button id="newRoundBtn" class="impostor-primary">Neu starten</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="pwa.js"></script>
+    <script src="impostor.js"></script>
+  </body>
+</html>

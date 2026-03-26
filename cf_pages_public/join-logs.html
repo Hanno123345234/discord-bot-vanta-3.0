@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Join Logs</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="card active">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+          <button id="refreshJoinLogsBtn" class="hidden">Neu laden</button>
+        </div>
+
+        <h1>Join Logs</h1>
+        <div class="admin-box">
+          <p class="subtitle">Mit Admin-Key kannst du alle Join/Open Events sehen.</p>
+          <label for="joinLogsKeyInput">Admin Access Key</label>
+          <input id="joinLogsKeyInput" type="password" placeholder="Admin-Key eingeben" autocomplete="off" />
+          <div class="stack">
+            <button id="joinLogsLoginBtn">Einloggen</button>
+            <button id="joinLogsLogoutBtn" class="mini-btn" type="button">Logout</button>
+          </div>
+          <p id="joinLogsInfo" class="subtitle"></p>
+        </div>
+
+        <div id="joinLogsPanel" class="hidden">
+          <div class="player-list-wrap">
+            <h3>Events</h3>
+            <ul id="joinLogsList" class="player-list"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="join-logs.js"></script>
+  </body>
+</html>

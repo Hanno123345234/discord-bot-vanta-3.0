@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Admin</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body class="admin-page">
+    <main class="app">
+      <section class="card active">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+          <button id="refreshAdminBtn" class="hidden">Neu laden</button>
+        </div>
+
+        <h1>Admin Dashboard</h1>
+  <p class="admin-page-subtitle">Hannos KI steuern und Chat-Logs ansehen</p>
+        <div id="adminLoginBox" class="admin-box">
+          <p class="subtitle">Zugriff nur mit Admin-Key</p>
+          <label for="adminKeyInput">Admin Access Key</label>
+          <input id="adminKeyInput" type="password" placeholder="Admin-Key eingeben" autocomplete="off" />
+          <div class="stack">
+            <button id="adminLoginBtn">Einloggen</button>
+            <button id="adminLogoutBtn" class="mini-btn" type="button">Logout</button>
+          </div>
+          <p id="adminInfo" class="subtitle"></p>
+        </div>
+
+        <div id="adminPanel" class="hidden">
+          <div id="aiSection" class="admin-box">
+            <h3>KI global steuern</h3>
+            <p id="aiControlInfo" class="subtitle"></p>
+            <div class="stack">
+              <button id="disableAiBtn" class="kick-btn" type="button">KI fuer alle ausschalten</button>
+              <button id="enableAiBtn" class="primary" type="button">KI fuer alle einschalten</button>
+            </div>
+          </div>
+
+          <div id="discordCommandsSection" class="admin-box">
+            <h3>Discord Commands</h3>
+            <p class="subtitle">Eigene Prefix-Commands erstellen und direkt im Bot verwenden.</p>
+
+            <label for="cmdSearchInput">Commands suchen</label>
+            <input id="cmdSearchInput" type="text" placeholder="Nach Trigger oder Text suchen..." autocomplete="off" />
+
+            <label for="cmdFilterAction">Aktion filtern</label>
+            <select id="cmdFilterAction">
+              <option value="all">Alle Aktionen</option>
+              <option value="text">Text senden</option>
+              <option value="embed">Embed senden</option>
+              <option value="dm">DM senden</option>
+              <option value="ban">Ban</option>
+              <option value="mute">Mute</option>
+              <option value="kick">Kick</option>
+              <option value="role">Role</option>
+            </select>
+
+            <label for="cmdTriggerInput">Trigger (ohne Prefix, z. B. hello)</label>
+            <input id="cmdTriggerInput" type="text" placeholder="hello" autocomplete="off" maxlength="32" />
+
+            <label for="cmdModeSelect">Aktion</label>
+            <select id="cmdModeSelect">
+              <option value="text">Text senden</option>
+              <option value="embed">Embed senden</option>
+              <option value="dm">DM senden</option>
+              <option value="ban">Ban</option>
+              <option value="mute">Mute</option>
+              <option value="kick">Kick</option>
+              <option value="role">Role</option>
+            </select>
+
+            <div id="cmdEmbedFields" class="hidden">
+              <label for="cmdEmbedTitleInput">Embed Titel (optional)</label>
+              <input id="cmdEmbedTitleInput" type="text" placeholder="Info" autocomplete="off" maxlength="120" />
+
+              <label for="cmdEmbedColorInput">Embed Farbe (Hex)</label>
+              <input id="cmdEmbedColorInput" type="text" placeholder="#87CEFA" autocomplete="off" maxlength="7" />
+            </div>
+
+            <label for="cmdResponseInput">Antwort</label>
+            <textarea id="cmdResponseInput" rows="4" placeholder="Hallo {user}, willkommen auf {server}."></textarea>
+            <p class="subtitle">Platzhalter: {user}, {username}, {server}, {channel}, {args}, {arg1} ... {arg5}</p>
+
+            <label><input id="cmdEnabledInput" type="checkbox" checked /> Aktiv</label>
+            <label><input id="cmdDeleteTriggerInput" type="checkbox" /> Trigger-Nachricht loeschen (del msg)</label>
+
+            <div class="stack">
+              <button id="cmdSaveBtn" class="primary" type="button">Command speichern</button>
+              <button id="cmdResetBtn" class="mini-btn" type="button">Formular leeren</button>
+            </div>
+
+            <ul id="discordCommandList" class="player-list command-card-grid"></ul>
+            <p id="cmdStatusInfo" class="subtitle"></p>
+          </div>
+
+          <div id="wickSettingsSection" class="admin-box">
+            <h3>Wick Settings</h3>
+            <p class="subtitle">Wick-Style Moderation komplett im Web einstellen und live an den Bot uebergeben.</p>
+
+            <label for="wickGuildIdInput">Guild ID</label>
+            <input id="wickGuildIdInput" type="text" placeholder="1368527215343435826" autocomplete="off" />
+
+            <label for="wickLogChannelInput">Log Channel ID (optional)</label>
+            <input id="wickLogChannelInput" type="text" placeholder="1466065677986299966" autocomplete="off" />
+
+            <label><input id="wickEnabledInput" type="checkbox" checked /> Wick aktiviert</label>
+            <label><input id="wickAutoStrikeInput" type="checkbox" checked /> Auto-Strike bei Warn</label>
+
+            <div class="wick-grid-2">
+              <div>
+                <label for="wickTimeout3Input">Timeout bei 3 Strikes (Minuten)</label>
+                <input id="wickTimeout3Input" type="number" min="0" step="1" value="30" />
+              </div>
+              <div>
+                <label for="wickTimeout5Input">Timeout bei 5 Strikes (Minuten)</label>
+                <input id="wickTimeout5Input" type="number" min="0" step="1" value="1440" />
+              </div>
+            </div>
+
+            <h4>Anti Raid</h4>
+            <label><input id="wickAntiRaidEnabledInput" type="checkbox" checked /> Aktiv</label>
+            <div class="wick-grid-3">
+              <div>
+                <label for="wickRaidJoinsInput">Joins Threshold</label>
+                <input id="wickRaidJoinsInput" type="number" min="2" step="1" value="8" />
+              </div>
+              <div>
+                <label for="wickRaidSecondsInput">Innerhalb Sekunden</label>
+                <input id="wickRaidSecondsInput" type="number" min="5" step="1" value="20" />
+              </div>
+              <div>
+                <label for="wickRaidSlowmodeInput">Slowmode Sekunden</label>
+                <input id="wickRaidSlowmodeInput" type="number" min="0" step="1" value="15" />
+              </div>
+            </div>
+
+            <h4>Anti Nuke</h4>
+            <label><input id="wickAntiNukeEnabledInput" type="checkbox" checked /> Aktiv</label>
+            <div class="wick-grid-3">
+              <div>
+                <label for="wickNukeChannelDeleteInput">Max Channel Deletes/Min</label>
+                <input id="wickNukeChannelDeleteInput" type="number" min="1" step="1" value="4" />
+              </div>
+              <div>
+                <label for="wickNukeRoleDeleteInput">Max Role Deletes/Min</label>
+                <input id="wickNukeRoleDeleteInput" type="number" min="1" step="1" value="3" />
+              </div>
+              <div>
+                <label for="wickNukeLockdownInput">Lockdown Minuten</label>
+                <input id="wickNukeLockdownInput" type="number" min="1" step="1" value="10" />
+              </div>
+            </div>
+
+            <h4>Link Shield</h4>
+            <label><input id="wickLinkShieldEnabledInput" type="checkbox" /> Aktiv</label>
+            <label><input id="wickBlockInvitesInput" type="checkbox" checked /> Discord Invites blocken</label>
+            <label for="wickWhitelistDomainsInput">Whitelist Domains (Komma getrennt)</label>
+            <textarea id="wickWhitelistDomainsInput" rows="3" placeholder="youtube.com, twitch.tv, discord.com"></textarea>
+
+            <div class="stack">
+              <button id="wickSaveBtn" class="primary" type="button">Wick Settings speichern</button>
+              <button id="wickResetBtn" class="mini-btn" type="button">Formular leeren</button>
+            </div>
+
+            <ul id="wickGuildList" class="player-list command-card-grid"></ul>
+            <p id="wickStatusInfo" class="subtitle"></p>
+          </div>
+
+          <div id="modmailSection" class="admin-box">
+            <h3>Modmail Inbox</h3>
+            <p class="subtitle">Bug reports and change requests sent from the public clip page.</p>
+
+            <label for="modmailStatusFilter">Status filter</label>
+            <select id="modmailStatusFilter">
+              <option value="all">All</option>
+              <option value="open">Open</option>
+              <option value="in_progress">In progress</option>
+              <option value="resolved">Resolved</option>
+              <option value="closed">Closed</option>
+            </select>
+
+            <div class="stack">
+              <button id="modmailReloadBtn" class="mini-btn" type="button">Reload Inbox</button>
+            </div>
+
+            <ul id="modmailList" class="player-list command-card-grid"></ul>
+            <p id="modmailStatusInfo" class="subtitle"></p>
+          </div>
+
+          <div class="player-list-wrap">
+            <h3>KI Chat Logs</h3>
+            <ul id="aiLogList" class="player-list"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="pwa.js"></script>
+    <script src="admin.js"></script>
+  </body>
+</html>

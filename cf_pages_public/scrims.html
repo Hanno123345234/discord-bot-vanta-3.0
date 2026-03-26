@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Scrims Creator</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section class="card active">
+        <div class="top-tools">
+          <a class="mini-link" href="index.html">Zur Startseite</a>
+          <a class="mini-link" href="dropmap.html">Dropmap</a>
+        </div>
+
+        <p class="home-kicker">Compete at the highest level</p>
+        <h1>Scrims Lobby Creator</h1>
+        <p class="subtitle">Erstelle Session-Lobbys wie bei Nova: schnell, sauber und professionell.</p>
+
+        <form id="createLobbyForm" class="dialog-form">
+          <div class="row two-cols">
+            <label>
+              <span>Session</span>
+              <input id="session" name="session" type="number" min="1" value="1" required />
+            </label>
+            <label>
+              <span>Lobby</span>
+              <input id="lobby" name="lobby" type="number" min="1" value="1" required />
+            </label>
+          </div>
+
+          <label>
+            <span>Registration Opens</span>
+            <input id="registrationOpens" name="registrationOpens" type="time" value="00:48" required />
+          </label>
+
+          <label>
+            <span>Lobby Template</span>
+            <select id="lobbyTemplate" name="lobbyTemplate" required>
+              <option value="duo-default" selected>Duo Default</option>
+              <option value="duo-ranked">Duo Ranked</option>
+              <option value="duo-custom">Duo Custom</option>
+              <option value="trio-default">Trio Default</option>
+              <option value="trio-ranked">Trio Ranked</option>
+              <option value="trio-custom">Trio Custom</option>
+            </select>
+          </label>
+
+          <section class="priority" aria-live="polite">
+            <h2>Priority Times (fixed)</h2>
+            <ul>
+              <li><strong>Supporter:</strong> <span id="supporterTime">--:--</span> <em>(+1 min)</em></li>
+              <li><strong>Server Booster + CC Priority:</strong> <span id="boosterTime">--:--</span> <em>(+2 min)</em></li>
+              <li><strong>Verified:</strong> <span id="verifiedTime">--:--</span> <em>(+3 min)</em></li>
+            </ul>
+          </section>
+
+          <div class="dialog-actions">
+            <button type="button" class="btn btn-ghost" id="resetBtn">Reset</button>
+            <button type="submit" class="btn btn-primary">Create Lobby</button>
+          </div>
+        </form>
+
+        <section id="result" class="result" hidden>
+          <h3>Antwort</h3>
+          <p id="resultText"></p>
+        </section>
+      </section>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="scrims.js"></script>
+  </body>
+</html>

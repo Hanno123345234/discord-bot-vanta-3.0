@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <title>Hannos KI</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="ki-page">
+      <aside class="ki-sidebar">
+        <div class="ki-sidebar-top">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+          <button id="newChatBtn" type="button" class="mini-btn">Neuer Chat</button>
+        </div>
+        <h3>Deine Chats</h3>
+        <ul id="chatSessionList" class="ki-session-list"></ul>
+      </aside>
+
+      <section class="ki-main">
+        <header class="ki-main-header">
+          <h1>Hannos KI</h1>
+          <p id="kiStatus" class="subtitle"></p>
+        </header>
+
+        <section id="kiMessages" class="ki-messages" aria-live="polite"></section>
+
+        <footer class="ki-input-wrap">
+          <textarea id="kiInput" rows="2" maxlength="500" placeholder="Stelle irgendeine Frage"></textarea>
+          <button id="kiSendBtn" type="button" class="primary">Senden</button>
+        </footer>
+      </section>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="hannos-ki.js"></script>
+  </body>
+</html>

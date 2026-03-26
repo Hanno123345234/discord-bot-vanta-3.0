@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <title>Quiz-Duell</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <section id="setupCard" class="card active">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+        </div>
+
+        <h1>Quiz-Duell</h1>
+        <p class="subtitle">Kurze Fragen, alle antworten gleichzeitig. Wer schneller richtig ist, sammelt Punkte.</p>
+
+        <label for="playerA">Spieler 1</label>
+        <input id="playerA" type="text" maxlength="24" autocomplete="off" placeholder="Spieler 1" />
+
+        <label for="playerB">Spieler 2</label>
+        <input id="playerB" type="text" maxlength="24" autocomplete="off" placeholder="Spieler 2" />
+
+        <label for="questionCount">Anzahl Fragen (gesamt)</label>
+        <input id="questionCount" type="number" min="4" max="40" value="10" />
+
+        <label for="category">Kategorie</label>
+        <select id="category"></select>
+
+        <label for="difficulty">Schwierigkeit</label>
+        <select id="difficulty"></select>
+
+        <div class="admin-box">
+          <h3>Online (mit Code)</h3>
+          <p class="subtitle">Host erstellt einen Code. Mehrere Spieler können mit dem Code beitreten.</p>
+
+          <label for="onlineName">Dein Name</label>
+          <input id="onlineName" type="text" maxlength="24" autocomplete="off" placeholder="Dein Name" />
+
+          <label for="maxPlayers">Maximale Spieler</label>
+          <select id="maxPlayers">
+            <option value="4">4</option>
+            <option value="6">6</option>
+            <option value="8" selected>8</option>
+          </select>
+
+          <div class="stack">
+            <button id="hostOnlineBtn" type="button">Code erstellen (Host)</button>
+          </div>
+
+          <p id="hostCodeLine" class="subtitle" style="display: none;">
+            Dein Code: <strong id="hostCodeText"></strong>
+          </p>
+
+          <label for="roomCode">Code beitreten</label>
+          <input id="roomCode" type="text" maxlength="8" autocomplete="off" placeholder="z.B. A1B2C" />
+
+          <div class="stack">
+            <button id="joinOnlineBtn" type="button">Beitreten (Join)</button>
+          </div>
+
+          <p id="onlineStatus" class="subtitle"></p>
+        </div>
+
+        <div class="stack">
+          <button id="startQuizBtn" class="primary">Starten</button>
+        </div>
+
+        <p id="setupError" class="subtitle"></p>
+      </section>
+
+      <section id="lobbyCard" class="card">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+          <button id="leaveLobbyBtn" class="mini-btn" type="button">Verlassen</button>
+        </div>
+
+        <h1>Online-Lobby</h1>
+        <p id="lobbyStatus" class="subtitle"></p>
+
+        <div class="admin-box">
+          <h3>Raum</h3>
+          <p class="subtitle">Code: <strong id="lobbyCodeText"></strong></p>
+
+          <h3>Spieler</h3>
+          <ul id="lobbyPlayers" class="player-list"></ul>
+        </div>
+
+        <div class="admin-box">
+          <h3>Einstellungen</h3>
+
+          <label for="lobbyQuestionCount">Anzahl Fragen (gesamt)</label>
+          <input id="lobbyQuestionCount" type="number" min="4" max="40" value="10" />
+
+          <label for="lobbyCategory">Kategorie</label>
+          <select id="lobbyCategory"></select>
+
+          <label for="lobbyDifficulty">Schwierigkeit</label>
+          <select id="lobbyDifficulty"></select>
+
+          <label for="lobbyMaxPlayers">Maximale Spieler</label>
+          <select id="lobbyMaxPlayers">
+            <option value="4">4</option>
+            <option value="6">6</option>
+            <option value="8" selected>8</option>
+          </select>
+        </div>
+
+        <div class="stack">
+          <button id="readyBtn" class="primary" type="button" disabled>Bereit</button>
+        </div>
+      </section>
+
+      <section id="playCard" class="card">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+          <button id="quitBtn" class="mini-btn" type="button">Abbrechen</button>
+        </div>
+
+        <h2 id="progressTitle">Frage</h2>
+        <p id="turnSubtitle" class="subtitle"></p>
+        <p id="roomSubtitle" class="subtitle"></p>
+
+        <div class="admin-box">
+          <h3 id="questionText"></h3>
+          <div id="answers" class="stack"></div>
+          <p id="feedback" class="subtitle"></p>
+          <div class="ai-help">
+            <div class="ai-help-actions">
+              <button id="aiHintBtn" type="button" class="mini-btn">KI-Tipp</button>
+              <button id="aiExplainBtn" type="button" class="mini-btn">KI-Erklaerung</button>
+            </div>
+            <div class="ai-chat-row">
+              <label for="aiAskInput">Frage an KI</label>
+              <textarea id="aiAskInput" rows="2" maxlength="280" placeholder="z. B. Erklaere mir das Thema einfacher"></textarea>
+              <button id="aiAskBtn" type="button" class="mini-btn">Senden</button>
+            </div>
+            <p id="aiHelpStatus" class="subtitle"></p>
+            <p id="aiHelpText" class="subtitle"></p>
+          </div>
+          <div class="stack">
+            <button id="nextBtn" class="primary" disabled>Nächste Frage…</button>
+          </div>
+        </div>
+
+        <div class="player-list-wrap">
+          <h3>Score</h3>
+          <ul id="scoreList" class="player-list"></ul>
+        </div>
+      </section>
+
+      <section id="resultCard" class="card">
+        <div class="top-tools">
+          <a href="./" class="mini-link">← Zur Auswahl</a>
+        </div>
+
+        <h1>Ergebnis</h1>
+        <p id="resultText" class="subtitle"></p>
+
+        <div class="player-list-wrap">
+          <h3>Endstand</h3>
+          <ul id="finalScoreList" class="player-list"></ul>
+        </div>
+
+        <div class="stack">
+          <button id="restartBtn" class="primary">Neue Runde</button>
+        </div>
+      </section>
+    </main>
+
+    <script src="config.js"></script>
+    <script src="quiz.js"></script>
+  </body>
+</html>

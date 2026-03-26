@@ -1,0 +1,1270 @@
+[
+  {
+    "id": "math_minutes_2_5h",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viele Minuten sind 2,5 Stunden?",
+    "a": ["120", "150", "180", "210"],
+    "c": 1
+  },
+  {
+    "id": "math_equation_3x_minus2",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist die Lösung von 3(x − 2) = 15?",
+    "a": ["x = 3", "x = 5", "x = 7", "x = 9"],
+    "c": 2
+  },
+  {
+    "id": "math_prime_29",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Welche Zahl ist eine Primzahl?",
+    "a": ["21", "29", "33", "35"],
+    "c": 1
+  },
+  {
+    "id": "geo_capital_canada",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Wie heißt die Hauptstadt von Kanada?",
+    "a": ["Toronto", "Vancouver", "Ottawa", "Montreal"],
+    "c": 2
+  },
+  {
+    "id": "history_ww1_start",
+    "category": "Geschichte",
+    "difficulty": "easy",
+    "q": "In welchem Jahr begann der Erste Weltkrieg?",
+    "a": ["1912", "1914", "1918", "1939"],
+    "c": 1
+  },
+  {
+    "id": "science_voltage_unit",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Einheit hat elektrische Spannung?",
+    "a": ["Watt", "Volt", "Ohm", "Newton"],
+    "c": 1
+  },
+  {
+    "id": "science_photosynthesis_product",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welches Gas entsteht bei der Photosynthese als Produkt?",
+    "a": ["Sauerstoff", "Stickstoff", "Kohlenstoffdioxid", "Wasserstoff"],
+    "c": 0
+  },
+  {
+    "id": "science_earth_rotation",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Die Erde ist der Sonne näher als die Venus.",
+      "Der Mond leuchtet selbst.",
+      "Die Erde rotiert in ca. 24 Stunden einmal.",
+      "Jupiter ist kleiner als die Erde."
+    ],
+    "c": 2
+  },
+  {
+    "id": "math_prime_definition",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie nennt man eine Zahl, die nur durch 1 und sich selbst teilbar ist?",
+    "a": ["gerade Zahl", "Primzahl", "Quadratzahl", "Bruch"],
+    "c": 1
+  },
+  {
+    "id": "math_symmetry_axis_one",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche der folgenden Formen hat genau eine Symmetrieachse?",
+    "a": ["gleichseitiges Dreieck", "gleichschenkliges Dreieck", "Quadrat", "Kreis"],
+    "c": 1
+  },
+  {
+    "id": "math_percent_15_of_200",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist 15% von 200?",
+    "a": ["15", "20", "30", "45"],
+    "c": 2
+  },
+  {
+    "id": "math_hexagon_sides",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viele Seiten hat ein regelmäßiges Sechseck?",
+    "a": ["5", "6", "7", "8"],
+    "c": 1
+  },
+  {
+    "id": "german_case_akkusativ",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Welche Aussage beschreibt einen Akkusativ?",
+    "a": ["2. Fall", "3. Fall", "4. Fall", "5. Fall"],
+    "c": 2
+  },
+  {
+    "id": "literature_faust_author",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Wer schrieb 'Faust'?",
+    "a": ["Goethe", "Schiller", "Kafka", "Brecht"],
+    "c": 0
+  },
+  {
+    "id": "geo_spree_city",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welche Stadt liegt an der Spree?",
+    "a": ["Hamburg", "Berlin", "Köln", "Dresden"],
+    "c": 1
+  },
+  {
+    "id": "math_square_number_25",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Welche Zahl ist eine Quadratzahl?",
+    "a": ["18", "20", "25", "27"],
+    "c": 2
+  },
+  {
+    "id": "science_circle_circumference",
+    "category": "Naturwissenschaft",
+    "difficulty": "medium",
+    "q": "Welche Formel ist richtig?",
+    "a": [
+      "Fläche Rechteck = a + b",
+      "Umfang Kreis = 2πr",
+      "Dichte = Masse · Volumen",
+      "Kraft = Masse / Beschleunigung"
+    ],
+    "c": 1
+  },
+  {
+    "id": "geo_capital_australia",
+    "category": "Geografie",
+    "difficulty": "medium",
+    "q": "Was ist die Hauptstadt von Australien?",
+    "a": ["Sydney", "Canberra", "Melbourne", "Perth"],
+    "c": 1
+  },
+  {
+    "id": "german_metaphor",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Was ist eine Metapher?",
+    "a": ["wörtliche Beschreibung", "Vergleich ohne 'wie'", "Reimform", "Aufzählung"],
+    "c": 1
+  },
+  {
+    "id": "geo_continent_most_countries",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welcher Kontinent hat die meisten Länder?",
+    "a": ["Europa", "Afrika", "Asien", "Südamerika"],
+    "c": 1
+  },
+  {
+    "id": "math_pow_2_5",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist die Lösung von 2^5?",
+    "a": ["16", "24", "32", "64"],
+    "c": 2
+  },
+  {
+    "id": "science_water_formula",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche ist eine chemische Formel für Wasser?",
+    "a": ["CO2", "H2O", "O2", "NaCl"],
+    "c": 1
+  },
+  {
+    "id": "politics_democracy",
+    "category": "Politik",
+    "difficulty": "easy",
+    "q": "Welche Aussage zur Demokratie passt am besten?",
+    "a": ["Eine Person entscheidet alles.", "Wahlen bestimmen Vertreter.", "Nur Könige bestimmen Gesetze.", "Es gibt keine Regeln."],
+    "c": 1
+  },
+  {
+    "id": "math_nearest_third",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Welche Zahl ist am nächsten an 1/3?",
+    "a": ["0,25", "0,33", "0,5", "0,75"],
+    "c": 1
+  },
+  {
+    "id": "math_three_quarters_decimal",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was bedeutet 'Dreiviertel' als Dezimalzahl?",
+    "a": ["0,25", "0,5", "0,75", "1,25"],
+    "c": 2
+  },
+  {
+    "id": "math_square_is_rectangle",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Ein Quadrat ist immer auch ein Rechteck.",
+      "Ein Rechteck ist immer ein Quadrat.",
+      "Ein Dreieck hat vier Seiten.",
+      "Ein Kreis hat Ecken."
+    ],
+    "c": 0
+  },
+  {
+    "id": "geo_equator",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welche Ebene trennt Nord- und Südhalbkugel?",
+    "a": ["Nullmeridian", "Äquator", "Wendekreis", "Polarkreis"],
+    "c": 1
+  },
+  {
+    "id": "geo_capital_italy",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Wie heißt die Hauptstadt von Italien?",
+    "a": ["Mailand", "Rom", "Neapel", "Florenz"],
+    "c": 1
+  },
+  {
+    "id": "science_newton_measures",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Größe misst man in Newton (N)?",
+    "a": ["Druck", "Energie", "Kraft", "Leistung"],
+    "c": 2
+  },
+  {
+    "id": "science_oxidation",
+    "category": "Naturwissenschaft",
+    "difficulty": "medium",
+    "q": "Was passiert bei einer Oxidation?",
+    "a": ["Elektronen werden aufgenommen", "Elektronen werden abgegeben", "Atome verschwinden", "Wasser wird zu Eis"],
+    "c": 1
+  },
+  {
+    "id": "geo_climate_zone",
+    "category": "Geografie",
+    "difficulty": "medium",
+    "q": "Welche Aussage zu Klimazonen ist richtig?",
+    "a": [
+      "Die Tropen liegen an den Polen.",
+      "Die gemäßigte Zone liegt zwischen Tropen und Polarzone.",
+      "Es gibt nur eine Klimazone.",
+      "In der Polarzone ist es immer warm."
+    ],
+    "c": 1
+  },
+  {
+    "id": "math_triangle_angles",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist die Summe der Innenwinkel in einem Dreieck?",
+    "a": ["90°", "120°", "180°", "360°"],
+    "c": 2
+  },
+  {
+    "id": "geo_capital_spain",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welche Stadt ist Hauptstadt von Spanien?",
+    "a": ["Barcelona", "Madrid", "Sevilla", "Valencia"],
+    "c": 1
+  },
+  {
+    "id": "math_percent_definition",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Prozent bedeutet 'von 100'.",
+      "Prozent bedeutet 'von 10'.",
+      "Prozent ist eine Längeneinheit.",
+      "Prozent ist immer größer als 1."
+    ],
+    "c": 0
+  },
+  {
+    "id": "science_evaporation",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Wie heißt der Vorgang, wenn Wasser zu Dampf wird?",
+    "a": ["Kondensieren", "Schmelzen", "Verdampfen", "Gefrieren"],
+    "c": 2
+  },
+  {
+    "id": "science_renewable_energy",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche ist ein Beispiel für erneuerbare Energie?",
+    "a": ["Braunkohle", "Erdgas", "Windkraft", "Benzin"],
+    "c": 2
+  },
+  {
+    "id": "science_cell_nucleus_dna",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Ein Atom besteht nur aus Elektronen.",
+      "Der Zellkern enthält DNA.",
+      "Bakterien sind immer Pflanzen.",
+      "Alle Viren sind Lebewesen."
+    ],
+    "c": 1
+  },
+  {
+    "id": "german_verse_line",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Wie nennt man die erste Zeile eines Gedichts oft?",
+    "a": ["Strophe", "Vers", "Refrain", "Kapitel"],
+    "c": 1
+  },
+  {
+    "id": "geo_alps_mountains",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": ["Nordsee ist ein See.", "Die Alpen sind ein Gebirge.", "Sahara ist ein Ozean.", "Der Rhein ist ein Gebirge."],
+    "c": 1
+  },
+  {
+    "id": "math_right_angle",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viele Grad hat ein rechter Winkel?",
+    "a": ["45°", "60°", "90°", "180°"],
+    "c": 2
+  },
+  {
+    "id": "math_multiplication_4_7",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wenn a = 4 und b = 7, was ist a·b?",
+    "a": ["11", "21", "24", "28"],
+    "c": 3
+  },
+  {
+    "id": "german_thesis_definition",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Was bedeutet 'These' in einem Text am ehesten?",
+    "a": ["Hauptaussage", "Beispiel", "Schlusswort", "Überschrift"],
+    "c": 0
+  },
+  {
+    "id": "history_antiquity_middleages_order",
+    "category": "Geschichte",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Das Mittelalter endet vor der Antike.",
+      "Die Antike kommt vor dem Mittelalter.",
+      "Die Neuzeit kommt vor dem Mittelalter.",
+      "Es gibt keine Reihenfolge."
+    ],
+    "c": 1
+  },
+  {
+    "id": "math_cm_to_mm",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viele Millimeter sind 3,2 Zentimeter?",
+    "a": ["0,32", "3,2", "32", "320"],
+    "c": 2
+  },
+  {
+    "id": "music_measure_definition",
+    "category": "Musik",
+    "difficulty": "easy",
+    "q": "Welche Aussage ist richtig?",
+    "a": [
+      "Ein Halbtonschritt ist größer als ein Ganzton.",
+      "In Musik ist ein Takt eine Zeiteinheit.",
+      "Noten sind nur für Klavier.",
+      "Rhythmus ist immer zufällig."
+    ],
+    "c": 1
+  },
+  {
+    "id": "science_planets_order",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Reihenfolge ist richtig (von der Sonne aus)?",
+    "a": ["Merkur, Venus, Erde, Mars", "Venus, Merkur, Erde, Mars", "Merkur, Erde, Venus, Mars", "Mars, Erde, Venus, Merkur"],
+    "c": 0
+  },
+  {
+    "id": "politics_eu_statement",
+    "category": "Politik",
+    "difficulty": "easy",
+    "q": "Welche Aussage zur EU ist richtig?",
+    "a": [
+      "Alle Länder Europas sind automatisch in der EU.",
+      "Die EU hat gemeinsame Regeln und Zusammenarbeit.",
+      "Die EU ist ein einzelnes Land.",
+      "Die EU hat keine eigenen Institutionen."
+    ],
+    "c": 1
+  },
+  {
+    "id": "math_seconds_in_hour",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viele Sekunden hat eine Stunde?",
+    "a": ["60", "600", "3600", "86400"],
+    "c": 2
+  },
+  {
+    "id": "math_sqrt_144",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist √144?",
+    "a": ["10", "11", "12", "14"],
+    "c": 2
+  },
+  {
+    "id": "science_current_unit",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Einheit hat die elektrische Stromstärke?",
+    "a": ["Ampere", "Volt", "Watt", "Ohm"],
+    "c": 0
+  },
+  {
+    "id": "science_fe_element",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welches Element hat das chemische Zeichen 'Fe'?",
+    "a": ["Fluor", "Eisen", "Fermium", "Blei"],
+    "c": 1
+  },
+  {
+    "id": "geo_capital_japan",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Wie heißt die Hauptstadt von Japan?",
+    "a": ["Kyoto", "Osaka", "Tokio", "Sapporo"],
+    "c": 2
+  },
+  {
+    "id": "history_berlin_wall",
+    "category": "Geschichte",
+    "difficulty": "easy",
+    "q": "In welchem Jahr fiel die Berliner Mauer?",
+    "a": ["1979", "1989", "1999", "2009"],
+    "c": 1
+  },
+  {
+    "id": "math_pythagoras_statement",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche Aussage zum Satz des Pythagoras ist richtig?",
+    "a": [
+      "Im rechtwinkligen Dreieck gilt: a² + b² = c² (c ist die Hypotenuse).",
+      "Im Dreieck gilt immer: a² + b² = c².",
+      "Im rechtwinkligen Dreieck gilt: a + b = c.",
+      "Im rechtwinkligen Dreieck gilt: a² = b² + c²."
+    ],
+    "c": 0
+  },
+  {
+    "id": "math_irrational_root2",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche Zahl ist irrational?",
+    "a": ["√2", "0,25", "1/3", "-5"],
+    "c": 0
+  },
+  {
+    "id": "science_joule_energy",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche der folgenden Größen ist eine Energieeinheit?",
+    "a": ["Joule", "Newton", "Pascal", "Ampere"],
+    "c": 0
+  },
+  {
+    "id": "math_three_quarters_percent",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie viel Prozent sind 3/4?",
+    "a": ["25%", "50%", "75%", "90%"],
+    "c": 2
+  },
+  {
+    "id": "german_adjective_schnell",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Welche Wortart ist 'schnell' in 'ein schnelles Auto'?",
+    "a": ["Verb", "Adjektiv", "Nomen", "Artikel"],
+    "c": 1
+  },
+  {
+    "id": "math_factorial_5",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Was ist das Ergebnis von 5! (Fakultät)?",
+    "a": ["20", "60", "120", "720"],
+    "c": 2
+  },
+  {
+    "id": "science_mitochondria",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Funktion haben Mitochondrien in Zellen am ehesten?",
+    "a": ["Energiegewinnung", "Fotosynthese", "Wassertransport", "Erbinformation speichern"],
+    "c": 0
+  },
+  {
+    "id": "politics_germany_states",
+    "category": "Politik",
+    "difficulty": "easy",
+    "q": "Wie viele Bundesländer hat Deutschland?",
+    "a": ["14", "15", "16", "17"],
+    "c": 2
+  },
+  {
+    "id": "geo_river_paris",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welcher Fluss fließt durch Paris?",
+    "a": ["Themse", "Seine", "Tiber", "Donau"],
+    "c": 1
+  },
+  {
+    "id": "science_ph_neutral",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Aussage zum pH-Wert ist richtig?",
+    "a": ["pH 7 ist sauer.", "pH 7 ist neutral.", "pH 7 ist basisch.", "pH kann nur ganze Zahlen sein."],
+    "c": 1
+  },
+  {
+    "id": "science_condensation",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Wie heißt der Vorgang, wenn Wasserdampf zu Wasser wird?",
+    "a": ["Verdampfen", "Kondensieren", "Schmelzen", "Gefrieren"],
+    "c": 1
+  },
+  {
+    "id": "math_divisible_by_9",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche der folgenden Zahlen ist durch 9 teilbar?",
+    "a": ["232", "234", "236", "238"],
+    "c": 1
+  },
+  {
+    "id": "geo_antarctica_south_pole",
+    "category": "Geografie",
+    "difficulty": "easy",
+    "q": "Welcher Kontinent liegt am Südpol?",
+    "a": ["Afrika", "Europa", "Antarktis", "Asien"],
+    "c": 2
+  },
+  {
+    "id": "science_density_formula",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Formel für Dichte ist richtig?",
+    "a": ["Dichte = Masse / Volumen", "Dichte = Masse · Volumen", "Dichte = Volumen / Masse", "Dichte = Kraft / Fläche"],
+    "c": 0
+  },
+  {
+    "id": "science_jupiter_type",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welche Art Planet ist Jupiter?",
+    "a": ["Gesteinsplanet", "Gasriese", "Zwergplanet", "Komet"],
+    "c": 1
+  },
+  {
+    "id": "science_air_most_nitrogen",
+    "category": "Naturwissenschaft",
+    "difficulty": "easy",
+    "q": "Welches Gas ist am häufigsten in der Luft?",
+    "a": ["Sauerstoff", "Stickstoff", "Kohlenstoffdioxid", "Argon"],
+    "c": 1
+  },
+  {
+    "id": "math_hexagon_interior_angle",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Wie groß ist ein Innenwinkel eines regelmäßigen Sechsecks?",
+    "a": ["90°", "120°", "135°", "150°"],
+    "c": 1
+  },
+  {
+    "id": "math_fraction_0_2",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Was ist 0,2 als Bruch?",
+    "a": ["1/2", "1/5", "2/5", "1/20"],
+    "c": 1
+  },
+  {
+    "id": "math_hypotenuse",
+    "category": "Mathe",
+    "difficulty": "easy",
+    "q": "Wie heißt die längste Seite in einem rechtwinkligen Dreieck?",
+    "a": ["Kathete", "Höhe", "Hypotenuse", "Mittellinie"],
+    "c": 2
+  },
+
+  {
+    "id": "geo_capital_brazil",
+    "category": "Geografie",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Brasilien?",
+    "a": ["Rio de Janeiro", "Brasília", "São Paulo", "Salvador"],
+    "c": 1
+  },
+  {
+    "id": "math_percentage_12_of_250",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Was sind 12% von 250?",
+    "a": ["25", "30", "32", "40"],
+    "c": 1
+  },
+  {
+    "id": "history_unification_germany",
+    "category": "Geschichte",
+    "difficulty": "medium",
+    "q": "In welchem Jahr wurde Deutschland (Deutsches Reich) gegründet?",
+    "a": ["1848", "1871", "1919", "1949"],
+    "c": 1
+  },
+  {
+    "id": "science_periodic_table_atomic_number",
+    "category": "Naturwissenschaft",
+    "difficulty": "medium",
+    "q": "Was gibt die Ordnungszahl eines Elements im Periodensystem an?",
+    "a": ["Anzahl der Neutronen", "Anzahl der Protonen", "Anzahl der Elektronenpaare", "Atommasse in Gramm"],
+    "c": 1
+  },
+  {
+    "id": "german_plural_buch",
+    "category": "Sprache",
+    "difficulty": "easy",
+    "q": "Wie lautet der Plural von „Buch“?",
+    "a": ["Buchen", "Bücher", "Buche", "Buchs"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_portugal",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Portugal?",
+    "a": ["Porto", "Lissabon", "Faro", "Braga"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_netherlands",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt der Niederlande?",
+    "a": ["Amsterdam", "Rotterdam", "Den Haag", "Utrecht"],
+    "c": 0
+  },
+  {
+    "id": "aw_capital_greece",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Griechenland?",
+    "a": ["Athen", "Thessaloniki", "Heraklion", "Patras"],
+    "c": 0
+  },
+  {
+    "id": "aw_currency_switzerland",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Währung in der Schweiz?",
+    "a": ["Euro", "Schweizer Franken", "Pfund", "Krone"],
+    "c": 1
+  },
+  {
+    "id": "aw_currency_uk",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Währung wird im Vereinigten Königreich verwendet?",
+    "a": ["Euro", "Dollar", "Pfund Sterling", "Franc"],
+    "c": 2
+  },
+  {
+    "id": "aw_ocean_between_africa_australia",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welcher Ozean liegt zwischen Afrika und Australien?",
+    "a": ["Atlantik", "Indischer Ozean", "Pazifik", "Arktischer Ozean"],
+    "c": 1
+  },
+  {
+    "id": "aw_longest_river_germany",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welcher Fluss ist der längste Fluss, der vollständig in Deutschland liegt?",
+    "a": ["Rhein", "Elbe", "Weser", "Donau"],
+    "c": 2
+  },
+  {
+    "id": "aw_planets_count",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie viele Planeten hat unser Sonnensystem?",
+    "a": ["7", "8", "9", "10"],
+    "c": 1
+  },
+  {
+    "id": "aw_largest_ocean",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welcher Ozean ist der größte?",
+    "a": ["Atlantik", "Pazifik", "Indischer Ozean", "Südlicher Ozean"],
+    "c": 1
+  },
+  {
+    "id": "aw_chemical_symbol_na",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wofür steht das chemische Zeichen „Na“?",
+    "a": ["Natrium", "Neon", "Nickel", "Stickstoff"],
+    "c": 0
+  },
+  {
+    "id": "aw_chemical_symbol_ag",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wofür steht das chemische Zeichen „Ag“?",
+    "a": ["Argon", "Silber", "Aluminium", "Gold"],
+    "c": 1
+  },
+  {
+    "id": "aw_organ_insulin",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welches Organ produziert Insulin?",
+    "a": ["Leber", "Bauchspeicheldrüse", "Niere", "Milz"],
+    "c": 1
+  },
+  {
+    "id": "aw_weather_science",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Wissenschaft, die sich mit Wetter beschäftigt?",
+    "a": ["Geologie", "Meteorologie", "Biologie", "Astronomie"],
+    "c": 1
+  },
+  {
+    "id": "aw_language_most_native",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Sprache hat weltweit die meisten Muttersprachler?",
+    "a": ["Englisch", "Spanisch", "Mandarin (Chinesisch)", "Arabisch"],
+    "c": 2
+  },
+  {
+    "id": "aw_eu_commission_seat",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welcher Stadt hat die EU-Kommission ihren Sitz?",
+    "a": ["Straßburg", "Brüssel", "Luxemburg", "Frankfurt"],
+    "c": 1
+  },
+  {
+    "id": "aw_un_headquarters",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welcher Stadt befindet sich der Hauptsitz der UNO (UN)?",
+    "a": ["Genf", "New York", "Paris", "Wien"],
+    "c": 1
+  },
+  {
+    "id": "aw_continent_egypt",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Auf welchem Kontinent liegt Ägypten hauptsächlich?",
+    "a": ["Afrika", "Europa", "Asien", "Südamerika"],
+    "c": 0
+  },
+  {
+    "id": "aw_highest_waterfall",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt der höchste Wasserfall der Welt?",
+    "a": ["Niagara", "Angel Falls", "Iguazú", "Victoriafälle"],
+    "c": 1
+  },
+  {
+    "id": "aw_mona_lisa_painter",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wer malte die Mona Lisa?",
+    "a": ["Michelangelo", "Leonardo da Vinci", "Raffael", "Van Gogh"],
+    "c": 1
+  },
+  {
+    "id": "aw_book_harry_potter_author",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wer schrieb die Harry-Potter-Buchreihe?",
+    "a": ["J. R. R. Tolkien", "J. K. Rowling", "Cornelia Funke", "Stephen King"],
+    "c": 1
+  },
+  {
+    "id": "aw_music_classical_9th",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wer komponierte die 9. Sinfonie („Ode an die Freude“)?",
+    "a": ["Mozart", "Beethoven", "Bach", "Vivaldi"],
+    "c": 1
+  },
+  {
+    "id": "aw_rome_colosseum_city",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welcher Stadt steht das Kolosseum?",
+    "a": ["Athen", "Rom", "Istanbul", "Madrid"],
+    "c": 1
+  },
+  {
+    "id": "aw_mount_everest_location",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welchem Gebirge liegt der Mount Everest?",
+    "a": ["Alpen", "Himalaya", "Anden", "Rocky Mountains"],
+    "c": 1
+  },
+  {
+    "id": "aw_human_bones_count",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie viele Knochen hat ein erwachsener Mensch ungefähr?",
+    "a": ["106", "206", "306", "406"],
+    "c": 1
+  },
+  {
+    "id": "aw_blood_group_ab",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Blutgruppe wird im AB0-System als „Universalempfänger“ bezeichnet?",
+    "a": ["0", "A", "B", "AB"],
+    "c": 3
+  },
+  {
+    "id": "aw_si_unit_force",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die SI-Einheit der Kraft?",
+    "a": ["Joule", "Newton", "Watt", "Pascal"],
+    "c": 1
+  },
+  {
+    "id": "aw_si_unit_energy",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die SI-Einheit der Energie?",
+    "a": ["Joule", "Newton", "Volt", "Ampere"],
+    "c": 0
+  },
+  {
+    "id": "aw_si_unit_power",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die SI-Einheit der Leistung?",
+    "a": ["Ohm", "Watt", "Newton", "Celsius"],
+    "c": 1
+  },
+  {
+    "id": "aw_gas_in_balloons",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welches Gas wird häufig verwendet, damit Ballons schweben?",
+    "a": ["Helium", "Sauerstoff", "Kohlenstoffdioxid", "Stickstoff"],
+    "c": 0
+  },
+  {
+    "id": "aw_glass_main_ingredient",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Aus welchem Rohstoff wird Glas hauptsächlich hergestellt?",
+    "a": ["Kalkstein", "Quarzsand", "Kohle", "Holz"],
+    "c": 1
+  },
+  {
+    "id": "aw_electric_resistance_unit",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welcher Einheit misst man elektrischen Widerstand?",
+    "a": ["Volt", "Ohm", "Ampere", "Watt"],
+    "c": 1
+  },
+  {
+    "id": "aw_speed_of_light_approx",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie groß ist die Lichtgeschwindigkeit ungefähr?",
+    "a": ["3.000 km/s", "30.000 km/s", "300.000 km/s", "3.000.000 km/s"],
+    "c": 2
+  },
+  {
+    "id": "aw_h2o_state_change_freeze",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Bei welcher Temperatur gefriert Wasser (bei Normaldruck)?",
+    "a": ["0°C", "10°C", "32°C", "100°C"],
+    "c": 0
+  },
+  {
+    "id": "aw_h2o_state_change_boiling",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Bei welcher Temperatur kocht Wasser (bei Normaldruck)?",
+    "a": ["50°C", "80°C", "100°C", "120°C"],
+    "c": 2
+  },
+  {
+    "id": "aw_largest_planet",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welcher Planet ist der größte in unserem Sonnensystem?",
+    "a": ["Erde", "Jupiter", "Saturn", "Neptun"],
+    "c": 1
+  },
+  {
+    "id": "aw_earth_moon_relation",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie lange braucht der Mond ungefähr für einen Umlauf um die Erde (relativ zu den Sternen)?",
+    "a": ["7 Tage", "14 Tage", "27 Tage", "365 Tage"],
+    "c": 2
+  },
+  {
+    "id": "aw_body_temp_normal",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Körpertemperatur gilt bei Menschen als „normal“ (ungefähr)?",
+    "a": ["34°C", "36–37°C", "38–39°C", "41°C"],
+    "c": 1
+  },
+  {
+    "id": "aw_sahara_location",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Auf welchem Kontinent liegt die Sahara?",
+    "a": ["Asien", "Afrika", "Australien", "Südamerika"],
+    "c": 1
+  },
+  {
+    "id": "aw_kilimanjaro_country",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welchem Land liegt der Kilimandscharo?",
+    "a": ["Kenia", "Tansania", "Uganda", "Äthiopien"],
+    "c": 1
+  },
+  {
+    "id": "aw_great_barrier_reef_country",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Vor welchem Land liegt das Great Barrier Reef?",
+    "a": ["Indonesien", "Australien", "Mexiko", "Südafrika"],
+    "c": 1
+  },
+  {
+    "id": "aw_fastest_land_animal",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welches Tier gilt als das schnellste Landtier?",
+    "a": ["Gepard", "Löwe", "Antilope", "Strauß"],
+    "c": 0
+  },
+  {
+    "id": "aw_largest_mammal",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welches Tier ist das größte Säugetier der Erde?",
+    "a": ["Afrikanischer Elefant", "Blauwal", "Giraffe", "Nashorn"],
+    "c": 1
+  },
+  {
+    "id": "aw_honey_producer",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welches Insekt produziert Honig?",
+    "a": ["Wespe", "Biene", "Ameise", "Libelle"],
+    "c": 1
+  },
+  {
+    "id": "aw_primary_color_mix",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Farbe entsteht (bei Farbmischung), wenn man Blau und Gelb mischt?",
+    "a": ["Lila", "Orange", "Grün", "Braun"],
+    "c": 2
+  },
+  {
+    "id": "aw_world_war2_end_year",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "In welchem Jahr endete der Zweite Weltkrieg in Europa?",
+    "a": ["1939", "1942", "1945", "1950"],
+    "c": 2
+  },
+  {
+    "id": "aw_first_man_on_moon",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie hieß der erste Mensch auf dem Mond?",
+    "a": ["Yuri Gagarin", "Neil Armstrong", "Buzz Aldrin", "John Glenn"],
+    "c": 1
+  },
+  {
+    "id": "aw_space_agency_nasa_country",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Zu welchem Land gehört die Raumfahrtbehörde NASA?",
+    "a": ["USA", "Russland", "China", "Deutschland"],
+    "c": 0
+  },
+  {
+    "id": "aw_largest_desert",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Wüste ist flächenmäßig die größte der Erde?",
+    "a": ["Sahara", "Gobi", "Antarktische Wüste", "Kalahari"],
+    "c": 2
+  },
+  {
+    "id": "aw_italy_shape",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Womit wird die Form Italiens oft verglichen?",
+    "a": ["Stiefel", "Herz", "Dreieck", "Stern"],
+    "c": 0
+  },
+  {
+    "id": "aw_germany_neighbors_count",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "An wie viele Länder grenzt Deutschland?",
+    "a": ["7", "9", "11", "13"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_sweden",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Schweden?",
+    "a": ["Oslo", "Stockholm", "Kopenhagen", "Helsinki"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_norway",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Norwegen?",
+    "a": ["Oslo", "Bergen", "Trondheim", "Stavanger"],
+    "c": 0
+  },
+  {
+    "id": "aw_capital_finland",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Finnland?",
+    "a": ["Helsinki", "Tampere", "Turku", "Oulu"],
+    "c": 0
+  },
+  {
+    "id": "aw_capital_ireland",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Irland?",
+    "a": ["Belfast", "Dublin", "Cork", "Galway"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_austria",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Österreich?",
+    "a": ["Salzburg", "Wien", "Graz", "Linz"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_poland",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Polen?",
+    "a": ["Krakau", "Warschau", "Danzig", "Breslau"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_hungary",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Ungarn?",
+    "a": ["Budapest", "Debrecen", "Szeged", "Pécs"],
+    "c": 0
+  },
+  {
+    "id": "aw_capital_czechia",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Tschechien?",
+    "a": ["Brünn", "Prag", "Ostrau", "Pilsen"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_denmark",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Dänemark?",
+    "a": ["Stockholm", "Kopenhagen", "Oslo", "Reykjavík"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_uk",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt des Vereinigten Königreichs?",
+    "a": ["London", "Manchester", "Edinburgh", "Birmingham"],
+    "c": 0
+  },
+  {
+    "id": "aw_capital_usa",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt der USA?",
+    "a": ["New York", "Washington, D.C.", "Los Angeles", "Chicago"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_mexico",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Mexiko?",
+    "a": ["Guadalajara", "Monterrey", "Mexiko-Stadt", "Cancún"],
+    "c": 2
+  },
+  {
+    "id": "aw_capital_argentina",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wie heißt die Hauptstadt von Argentinien?",
+    "a": ["Santiago", "Buenos Aires", "Montevideo", "Lima"],
+    "c": 1
+  },
+  {
+    "id": "aw_capital_south_africa_admin",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Welche Stadt ist eine der drei Hauptstädte Südafrikas (Regierungssitz)?",
+    "a": ["Kapstadt", "Pretoria", "Johannesburg", "Durban"],
+    "c": 1
+  },
+  {
+    "id": "aw_internet_www_meaning",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Wofür steht die Abkürzung „WWW“?",
+    "a": ["World Wide Web", "Wireless Web World", "Web World Wireless", "Wide World Web"],
+    "c": 0
+  },
+  {
+    "id": "aw_triangle_area_formula",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche Formel passt zur Fläche eines Dreiecks?",
+    "a": ["A = a · b", "A = (a · h)/2", "A = 2πr", "A = a + b + c"],
+    "c": 1
+  },
+  {
+    "id": "aw_rectangle_area_formula",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Welche Formel passt zur Fläche eines Rechtecks?",
+    "a": ["A = a · b", "A = a + b", "A = (a · h)/2", "A = πr²"],
+    "c": 0
+  },
+  {
+    "id": "aw_percent_20_of_150",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Was sind 20% von 150?",
+    "a": ["20", "25", "30", "35"],
+    "c": 2
+  },
+  {
+    "id": "aw_fraction_to_percent",
+    "category": "Mathe",
+    "difficulty": "medium",
+    "q": "Wie viel Prozent sind 1/5?",
+    "a": ["5%", "10%", "20%", "25%"],
+    "c": 2
+  },
+  {
+    "id": "aw_spelling_after_s",
+    "category": "Sprache",
+    "difficulty": "medium",
+    "q": "Welche Schreibweise ist korrekt?",
+    "a": ["dass", "daß", "das", "dasss"],
+    "c": 0
+  },
+  {
+    "id": "aw_parts_of_speech_article",
+    "category": "Sprache",
+    "difficulty": "medium",
+    "q": "Welche Wortart ist „der“ in „der Hund“?",
+    "a": ["Verb", "Artikel", "Adjektiv", "Pronomen"],
+    "c": 1
+  },
+  {
+    "id": "aw_synonym_fast",
+    "category": "Sprache",
+    "difficulty": "medium",
+    "q": "Welches Wort ist ein Synonym für „schnell“?",
+    "a": ["rasch", "leise", "langsam", "spät"],
+    "c": 0
+  },
+  {
+    "id": "aw_music_instrument_strings",
+    "category": "Musik",
+    "difficulty": "medium",
+    "q": "Welches Instrument gehört zu den Streichinstrumenten?",
+    "a": ["Flöte", "Violine", "Trompete", "Klarinette"],
+    "c": 1
+  },
+  {
+    "id": "aw_music_tempo_term",
+    "category": "Musik",
+    "difficulty": "medium",
+    "q": "Was bedeutet „Allegro“ in der Musik?",
+    "a": ["langsam", "fröhlich/schnell", "sehr leise", "sehr laut"],
+    "c": 1
+  },
+  {
+    "id": "aw_geography_time_zones",
+    "category": "Allgemeinwissen",
+    "difficulty": "medium",
+    "q": "Warum gibt es auf der Erde verschiedene Zeitzonen?",
+    "a": ["Weil die Erde sich um die Sonne dreht", "Weil die Erde sich um die eigene Achse dreht", "Weil der Mond sich bewegt", "Weil Wolken die Sonne verdecken"],
+    "c": 1
+  }
+
+]

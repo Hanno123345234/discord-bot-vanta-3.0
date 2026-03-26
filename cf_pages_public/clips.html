@@ -1,0 +1,629 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0f1220" />
+    <title>ClipDrop - Share Your Best Plays</title>
+    <link rel="stylesheet" href="styles.css" />
+    <style>
+      .clip-shell {
+        display: grid;
+        gap: 14px;
+      }
+
+      .promo-strip {
+        border: 1px solid rgba(125, 245, 206, 0.35);
+        background: linear-gradient(115deg, rgba(19, 62, 68, 0.85), rgba(8, 35, 55, 0.88));
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: #b6fff1;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+
+      .promo-strip small {
+        display: block;
+        margin-top: 4px;
+        font-weight: 500;
+        color: #cae8ff;
+      }
+
+      .promo-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .promo-card {
+        border: 1px solid rgba(109, 208, 255, 0.28);
+        border-radius: 12px;
+        background: rgba(8, 22, 44, 0.7);
+        padding: 10px;
+      }
+
+      .promo-card h3 {
+        margin: 0 0 6px;
+        font-size: 0.95rem;
+      }
+
+      .promo-card p {
+        margin: 0;
+        font-size: 0.84rem;
+        color: var(--muted);
+      }
+
+      .clip-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      .clip-title {
+        margin: 0;
+        font-size: clamp(1.4rem, 3vw, 2rem);
+      }
+
+      .clip-subtitle {
+        margin: 6px 0 0;
+        color: var(--muted);
+      }
+
+      .clip-form {
+        display: grid;
+        gap: 12px;
+      }
+
+      .clip-label {
+        display: grid;
+        gap: 6px;
+        font-weight: 600;
+      }
+
+      .clip-input,
+      .clip-file {
+        width: 100%;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(7, 13, 30, 0.72);
+        color: var(--text);
+        min-height: 44px;
+        padding: 10px 12px;
+      }
+
+      .clip-meta {
+        margin: 2px 0 0;
+        font-size: 0.85rem;
+        color: var(--muted);
+      }
+
+      .clip-submit {
+        border: none;
+        min-height: 46px;
+        border-radius: 12px;
+        padding: 10px 14px;
+        font-weight: 800;
+        color: #06121f;
+        background: linear-gradient(115deg, #35e2ff, #7dffb3);
+        cursor: pointer;
+      }
+
+      .clip-submit:disabled {
+        cursor: progress;
+        opacity: 0.75;
+      }
+
+      .clip-result {
+        display: none;
+        border: 1px solid rgba(104, 255, 201, 0.35);
+        background: rgba(11, 34, 32, 0.64);
+        border-radius: 12px;
+        padding: 12px;
+        gap: 8px;
+      }
+
+      .clip-result.show {
+        display: grid;
+      }
+
+      .clip-result-row {
+        display: grid;
+        gap: 6px;
+      }
+
+      .clip-result-row input {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(7, 13, 30, 0.76);
+        color: var(--text);
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+
+      .clip-error {
+        display: none;
+        border: 1px solid rgba(255, 123, 123, 0.45);
+        background: rgba(44, 12, 18, 0.62);
+        border-radius: 12px;
+        padding: 10px 12px;
+        color: #ffd0d7;
+      }
+
+      .clip-error.show {
+        display: block;
+      }
+
+      .gallery-shell {
+        margin-top: 8px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .gallery-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .gallery-title {
+        margin: 0;
+        font-size: 1.1rem;
+      }
+
+      .gallery-meta {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .gallery-tools {
+        display: grid;
+        gap: 10px;
+      }
+
+      .gallery-search {
+        width: 100%;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        background: rgba(7, 13, 30, 0.76);
+        color: var(--text);
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+
+      .gallery-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 10px;
+      }
+
+      .clip-card {
+        border: 1px solid rgba(124, 197, 255, 0.28);
+        background: rgba(10, 23, 44, 0.72);
+        border-radius: 12px;
+        padding: 8px;
+        display: grid;
+        gap: 8px;
+      }
+
+      .clip-card video {
+        width: 100%;
+        border-radius: 8px;
+        background: #010307;
+        max-height: 180px;
+      }
+
+      .clip-card h3 {
+        margin: 0;
+        font-size: 0.95rem;
+        line-height: 1.3;
+        overflow-wrap: anywhere;
+      }
+
+      .clip-card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .clip-card-actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr 1fr;
+        gap: 8px;
+      }
+
+      .clip-action {
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(5, 12, 25, 0.7);
+        color: var(--text);
+        border-radius: 9px;
+        min-height: 34px;
+        cursor: pointer;
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-align: center;
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .gallery-empty {
+        margin: 0;
+        color: var(--muted);
+        border: 1px dashed rgba(161, 196, 255, 0.35);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      @media (max-width: 680px) {
+        .clip-header {
+          align-items: flex-start;
+        }
+
+        .gallery-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .promo-grid {
+          grid-template-columns: 1fr;
+        }
+
+      }
+
+      @media (min-width: 681px) and (max-width: 980px) {
+        .gallery-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="app">
+      <section class="card active clip-shell">
+        <header class="clip-header">
+          <div>
+            <h1 class="clip-title">ClipDrop</h1>
+            <p class="clip-subtitle">Upload your gameplay clip and manage it privately in your own session.</p>
+          </div>
+        </header>
+
+        <section class="promo-strip" aria-label="Promotion">
+          Built for creators, teams, and communities.
+          <small>Fast upload. Instant share link. Mobile-friendly player.</small>
+        </section>
+
+        <section class="promo-grid" aria-label="Why ClipDrop">
+          <article class="promo-card">
+            <h3>Share in Seconds</h3>
+            <p>Upload in seconds and keep every clip in your private personal space.</p>
+          </article>
+          <article class="promo-card">
+            <h3>Private by Default</h3>
+            <p>Only your browser session can list, open, and remove your uploaded clips.</p>
+          </article>
+          <article class="promo-card">
+            <h3>Auto Cleanup</h3>
+            <p>Your storage stays clean with automatic retention and managed lifecycle.</p>
+          </article>
+        </section>
+
+        <form id="clipForm" class="clip-form" novalidate>
+          <label class="clip-label" for="clipTitle">
+            Title (optional)
+            <input id="clipTitle" name="title" class="clip-input" type="text" maxlength="120" placeholder="Example: 1v3 Ascent clutch" />
+          </label>
+
+          <label class="clip-label" for="clipFile">
+            Video file
+            <input id="clipFile" name="clip" class="clip-file" type="file" accept="video/mp4,video/webm,video/quicktime,video/x-matroska,video/ogg,.mp4,.webm,.mov,.mkv,.ogv" required />
+          </label>
+
+          <p class="clip-meta">Supported formats: mp4, webm, mov, mkv, ogv. Max 200 MB by default.</p>
+
+          <button id="submitBtn" class="clip-submit" type="submit">Upload Clip</button>
+        </form>
+
+        <p id="clipError" class="clip-error" role="alert"></p>
+
+        <section id="clipResult" class="clip-result" aria-live="polite">
+          <strong>Clip uploaded successfully.</strong>
+          <div class="clip-result-row">
+            <label for="shareUrl">Share link</label>
+            <input id="shareUrl" type="text" readonly />
+          </div>
+          <button id="copyBtn" class="home-link" type="button">Copy share link</button>
+        </section>
+
+        <section class="gallery-shell" aria-label="Recently uploaded clips">
+          <header class="gallery-head">
+            <h2 class="gallery-title">Latest Clips</h2>
+            <p id="retentionInfo" class="gallery-meta"></p>
+          </header>
+          <div class="gallery-tools">
+            <input id="gallerySearchInput" class="gallery-search" type="search" placeholder="Search clips by title or filename" autocomplete="off" />
+            <p class="clip-meta">Private mode enabled: only your own clips are visible in this session.</p>
+          </div>
+          <p id="galleryEmpty" class="gallery-empty">Loading gallery...</p>
+          <div id="galleryGrid" class="gallery-grid" hidden></div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const clipForm = document.getElementById("clipForm");
+      const clipTitle = document.getElementById("clipTitle");
+      const clipFile = document.getElementById("clipFile");
+      const submitBtn = document.getElementById("submitBtn");
+      const clipResult = document.getElementById("clipResult");
+      const clipError = document.getElementById("clipError");
+      const shareUrlInput = document.getElementById("shareUrl");
+      const copyBtn = document.getElementById("copyBtn");
+      const galleryGrid = document.getElementById("galleryGrid");
+      const galleryEmpty = document.getElementById("galleryEmpty");
+      const retentionInfo = document.getElementById("retentionInfo");
+      const gallerySearchInput = document.getElementById("gallerySearchInput");
+      let galleryClips = [];
+
+      function showError(message) {
+        clipError.textContent = String(message || "Unknown error.");
+        clipError.classList.add("show");
+      }
+
+      function clearError() {
+        clipError.textContent = "";
+        clipError.classList.remove("show");
+      }
+
+      function showResult(data) {
+        shareUrlInput.value = data.shareUrl || "";
+        clipResult.classList.add("show");
+      }
+
+      function setLoading(loading) {
+        submitBtn.disabled = loading;
+        submitBtn.textContent = loading ? "Uploading..." : "Upload Clip";
+      }
+
+      function formatSize(bytes) {
+        const value = Number(bytes || 0);
+        if (!Number.isFinite(value) || value <= 0) return "0 B";
+        const units = ["B", "KB", "MB", "GB"];
+        const index = Math.min(units.length - 1, Math.floor(Math.log(value) / Math.log(1024)));
+        const size = value / Math.pow(1024, index);
+        const digits = index === 0 ? 0 : 1;
+        return `${size.toFixed(digits)} ${units[index]}`;
+      }
+
+      function formatUploadedAt(iso) {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return "unknown";
+        return d.toLocaleString("en-US", {
+          day: "2-digit",
+          month: "2-digit",
+          year: "numeric",
+          hour: "2-digit",
+          minute: "2-digit"
+        });
+      }
+
+      async function copyText(text, fallbackInput) {
+        const normalized = String(text || "").trim();
+        if (!normalized) return;
+        try {
+          await navigator.clipboard.writeText(normalized);
+        } catch (error) {
+          if (fallbackInput) {
+            fallbackInput.value = normalized;
+            fallbackInput.focus();
+            fallbackInput.select();
+          }
+        }
+      }
+
+      function normalizeSearch(text) {
+        return String(text || "").trim().toLowerCase();
+      }
+
+      function getFilteredClips() {
+        const q = normalizeSearch(gallerySearchInput.value);
+        if (!q) return galleryClips.slice();
+        return galleryClips.filter((item) => {
+          const title = String(item.title || "").toLowerCase();
+          const original = String(item.originalName || "").toLowerCase();
+          const id = String(item.id || "").toLowerCase();
+          return title.includes(q) || original.includes(q) || id.includes(q);
+        });
+      }
+
+      async function deleteClipById(clipId) {
+        const response = await fetch("/api/clips/delete", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ id: clipId })
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || "Could not delete clip.");
+        }
+        return true;
+      }
+
+      function createClipCard(item) {
+        const article = document.createElement("article");
+        article.className = "clip-card";
+
+        const player = document.createElement("video");
+        player.src = item.videoPath;
+        player.controls = true;
+        player.preload = "metadata";
+        player.playsInline = true;
+        player.muted = true;
+        article.appendChild(player);
+
+        const title = document.createElement("h3");
+        title.textContent = item.title || item.originalName || "Untitled clip";
+        article.appendChild(title);
+
+        const info = document.createElement("p");
+        info.textContent = `${formatUploadedAt(item.uploadedAt)} | ${formatSize(item.size)}`;
+        article.appendChild(info);
+
+        const actions = document.createElement("div");
+        actions.className = "clip-card-actions";
+
+        const openLink = document.createElement("a");
+        openLink.className = "clip-action";
+        openLink.href = item.sharePath;
+        openLink.textContent = "Open";
+        openLink.target = "_blank";
+        openLink.rel = "noopener noreferrer";
+        actions.appendChild(openLink);
+
+        const copyBtnInline = document.createElement("button");
+        copyBtnInline.className = "clip-action";
+        copyBtnInline.type = "button";
+        copyBtnInline.textContent = "Copy link";
+        copyBtnInline.addEventListener("click", async () => {
+          const absolute = new URL(item.sharePath, window.location.href).toString();
+          await copyText(absolute, shareUrlInput);
+          copyBtnInline.textContent = "Copied";
+          setTimeout(() => {
+            copyBtnInline.textContent = "Copy link";
+          }, 1200);
+        });
+        actions.appendChild(copyBtnInline);
+
+        const deleteBtnInline = document.createElement("button");
+        deleteBtnInline.className = "clip-action";
+        deleteBtnInline.type = "button";
+        deleteBtnInline.textContent = "Delete";
+        deleteBtnInline.addEventListener("click", async () => {
+          if (!window.confirm("Delete this clip permanently?")) return;
+          try {
+            deleteBtnInline.disabled = true;
+            await deleteClipById(item.id);
+            galleryClips = galleryClips.filter((entry) => entry.id !== item.id);
+            renderGallery();
+          } catch (error) {
+            showError(error && error.message ? error.message : "Delete failed.");
+          } finally {
+            deleteBtnInline.disabled = false;
+          }
+        });
+        actions.appendChild(deleteBtnInline);
+
+        article.appendChild(actions);
+        return article;
+      }
+
+      function renderGallery(payload) {
+        if (payload && Array.isArray(payload.clips)) {
+          galleryClips = payload.clips.slice();
+          const retentionDays = Number(payload.retentionDays);
+          retentionInfo.textContent = Number.isFinite(retentionDays)
+            ? `Auto-delete after ${retentionDays} days`
+            : "Auto-delete active";
+        }
+
+        const clips = getFilteredClips();
+
+        galleryGrid.replaceChildren();
+        if (!clips.length) {
+          galleryGrid.hidden = true;
+          galleryEmpty.hidden = false;
+          galleryEmpty.textContent = galleryClips.length
+            ? "No clips match your search."
+            : "No clips uploaded yet.";
+          return;
+        }
+
+        for (const item of clips) {
+          galleryGrid.appendChild(createClipCard(item));
+        }
+
+        galleryEmpty.hidden = true;
+        galleryGrid.hidden = false;
+      }
+
+      async function loadGallery() {
+        try {
+          const response = await fetch("/api/clips/latest?limit=12");
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            throw new Error(payload.error || "Could not load the gallery.");
+          }
+          renderGallery(payload);
+        } catch (error) {
+          galleryGrid.hidden = true;
+          galleryEmpty.hidden = false;
+          galleryEmpty.textContent = error && error.message ? error.message : "Gallery error.";
+        }
+      }
+
+      clipForm.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        clearError();
+        clipResult.classList.remove("show");
+
+        const file = clipFile.files && clipFile.files[0];
+        if (!file) {
+          showError("Please choose a video file first.");
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("clip", file);
+        formData.append("title", clipTitle.value.trim());
+
+        setLoading(true);
+        try {
+          const response = await fetch("/api/clips/upload", {
+            method: "POST",
+            body: formData
+          });
+
+          const payload = await response.json().catch(() => ({}));
+          if (!response.ok || !payload.ok) {
+            showError(payload.error || "Upload failed.");
+            return;
+          }
+
+          showResult(payload);
+          await loadGallery();
+        } catch (error) {
+          showError(error && error.message ? error.message : "Network error during upload.");
+        } finally {
+          setLoading(false);
+        }
+      });
+
+      copyBtn.addEventListener("click", async () => {
+        const value = shareUrlInput.value.trim();
+        if (!value) return;
+        try {
+          await copyText(value, shareUrlInput);
+          copyBtn.textContent = "Copied";
+          setTimeout(() => {
+            copyBtn.textContent = "Copy share link";
+          }, 1300);
+        } catch (error) {
+          shareUrlInput.focus();
+          shareUrlInput.select();
+        }
+      });
+
+      gallerySearchInput.addEventListener("input", () => {
+        renderGallery();
+      });
+      loadGallery();
+    </script>
+  </body>
+</html>
